@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 # Configuración visual
 st.set_page_config(page_title="Sistema de Vending", page_icon="🟢", layout="wide")
@@ -48,14 +48,20 @@ CREATE TABLE IF NOT EXISTS ventas_diarias (
 """)
 conn.commit()
 
-# Sección: Ventas Diarias (nuevo diseño tipo tabla)
+# Sección: Ventas Diarias (nuevo diseño semanal)
 if opcion == "Ventas Diarias":
     st.markdown("## 📋 Registro Semanal por Máquina")
-    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    fecha_lunes = st.date_input("Selecciona el lunes de la semana", help="Elige el lunes para registrar la semana")
+    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+    fechas_dia = [fecha_lunes + timedelta(days=i) for i in range(6)]
+
     maquinas = [
-        "Máquina 1 - Norte", "Máquina 2", "Máquina 3", "Máquina 4",
-        "Máquina 5", "Máquina 6", "Máquina 7", "Máquina 8"
+        "Motomall", "Unidad", "Norte", "Buses",
+        "Paquetex", "Dekohouse", "Caldas", "Maquina 8"
     ]
+
+    ventas_por_maquina = {m: 0 for m in maquinas}
+    ventas_por_dia = {d: 0 for d in dias}
 
     for maquina in maquinas:
         st.markdown(f"### {maquina}")
@@ -66,14 +72,18 @@ if opcion == "Ventas Diarias":
         cols = st.columns(len(dias))
         for i, dia in enumerate(dias):
             with cols[i]:
-                st.markdown(f"**{dia}**")
+                st.markdown(f"**{dia} ({fechas_dia[i]})**")
                 venta = st.number_input(f"Ventas", min_value=0, step=1, key=f"{maquina}_{dia}_v")
                 egreso = st.number_input(f"Egresos", min_value=0, step=1, key=f"{maquina}_{dia}_e")
                 neto = venta - egreso
+                fondo = round(neto * 0.05)
                 st.write(f"Neto: ${neto}")
+                st.write(f"Fondo: ${fondo}")
                 ventas.append(venta)
                 egresos.append(egreso)
                 netos.append(neto)
+                ventas_por_maquina[maquina] += venta
+                ventas_por_dia[dia] += venta
 
         total_ventas = sum(ventas)
         total_egresos = sum(egresos)
@@ -88,6 +98,22 @@ if opcion == "Ventas Diarias":
         col2.metric("💰 Profit Semanal", f"${profit_semanal}")
         col3.metric("📈 Promedio/Día", f"${promedio_dia}")
         col4.metric("🛟 Fondo Emergencia (5%)", f"${fondo_emergencia}")
+
+    # Gráfica: Ventas por máquina
+    st.markdown("## 📊 Ventas totales por máquina en la semana")
+    df_maquinas = pd.DataFrame({
+        "Máquina": list(ventas_por_maquina.keys()),
+        "Ventas": list(ventas_por_maquina.values())
+    })
+    st.bar_chart(df_maquinas.set_index("Máquina"))
+
+    # Gráfica: Días con más ventas
+    st.markdown("## 📈 Días con más ventas en la semana")
+    df_dias = pd.DataFrame({
+        "Día": list(ventas_por_dia.keys()),
+        "Ventas": list(ventas_por_dia.values())
+    })
+    st.line_chart(df_dias.set_index("Día"))
 
 # Sección: Dashboard semanal
 elif opcion == "Dashboard":
@@ -106,29 +132,4 @@ elif opcion == "Dashboard":
 
         maquinas = ["maquina_agua", "maquina_cafe", "maquina_jugo", "maquina_galletas", "maquina_barra", "maquina_energizante"]
         totales = {m: semana[m].sum() for m in maquinas}
-        df_maquinas = pd.DataFrame(list(totales.items()), columns=["Máquina", "Ventas"])
-        df_maquinas["Máquina"] = df_maquinas["Máquina"].str.replace("maquina_", "").str.capitalize()
-
-        fig = px.bar(df_maquinas, x="Máquina", y="Ventas", color="Máquina", title="Máquinas más vendidas esta semana", color_discrete_sequence=["#007A5E"])
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No hay datos registrados aún.")
-
-# Sección: Historial
-elif opcion == "Historial":
-    st.markdown("### 📋 Historial completo")
-    df = pd.read_sql_query("SELECT * FROM ventas_diarias ORDER BY fecha DESC", conn)
-    st.dataframe(df)
-
-# Sección: Reportes
-elif opcion == "Reportes":
-    st.markdown("### 📥 Descargar reporte")
-    df = pd.read_sql_query("SELECT * FROM ventas_diarias ORDER BY fecha DESC", conn)
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="Descargar CSV",
-        data=csv,
-        file_name="ventas_diarias.csv",
-        mime="text/csv",
-        help="Descarga el historial en formato Excel"
-    )
+        df_maquinas = pd.DataFrame(list(totales.items()),
