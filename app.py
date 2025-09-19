@@ -26,29 +26,21 @@ st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Gree
 st.sidebar.title("Menú")
 opcion = st.sidebar.radio("Ir a:", ["Dashboard", "Ventas Diarias", "Historial", "Reportes"])
 
-# Cabecera
-st.title("📈 Sistema de Reposición de Máquinas Vending")
-st.subheader("Control, visualización y eficiencia en tiempo real")
-
 # Conexión a base de datos
-conn = sqlite3.connect("ventas.db")
+conn = sqlite3.connect("ventas_semanales.db")
 cursor = conn.cursor()
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS ventas_diarias (
-    fecha TEXT PRIMARY KEY,
-    maquina_agua INTEGER,
-    maquina_cafe INTEGER,
-    maquina_jugo INTEGER,
-    maquina_galletas INTEGER,
-    maquina_barra INTEGER,
-    maquina_energizante INTEGER,
-    egresos INTEGER,
-    total INTEGER
+CREATE TABLE IF NOT EXISTS resumen_semanal (
+    semana TEXT,
+    maquina TEXT,
+    dia TEXT,
+    ventas INTEGER,
+    egresos INTEGER
 )
 """)
 conn.commit()
 
-# Sección: Ventas Diarias (nuevo diseño semanal)
+# Sección: Ventas Diarias (actualizada)
 if opcion == "Ventas Diarias":
     st.markdown("## 📋 Registro Semanal por Máquina")
     fecha_lunes = st.date_input("Selecciona el lunes de la semana", help="Elige el lunes para registrar la semana")
@@ -60,101 +52,82 @@ if opcion == "Ventas Diarias":
         "Paquetex", "Dekohouse", "Caldas", "Maquina 8"
     ]
 
+    registros = []
     ventas_por_maquina = {m: 0 for m in maquinas}
     ventas_por_dia = {d: 0 for d in dias}
 
     for maquina in maquinas:
         st.markdown(f"### {maquina}")
-        ventas = []
-        egresos = []
-        netos = []
-
         cols = st.columns(len(dias))
         for i, dia in enumerate(dias):
             with cols[i]:
                 st.markdown(f"**{dia} ({fechas_dia[i]})**")
                 venta = st.number_input(f"Ventas", min_value=0, step=1, key=f"{maquina}_{dia}_v")
                 egreso = st.number_input(f"Egresos", min_value=0, step=1, key=f"{maquina}_{dia}_e")
-                neto = venta - egreso
-                fondo = round(neto * 0.05)
-                st.write(f"Neto: ${neto}")
-                st.write(f"Fondo: ${fondo}")
-                ventas.append(venta)
-                egresos.append(egreso)
-                netos.append(neto)
+                registros.append((str(fecha_lunes), maquina, dia, venta, egreso))
+                st.write(f"Neto: ${venta - egreso}")
+                st.write(f"Fondo: ${round((venta - egreso) * 0.05)}")
                 ventas_por_maquina[maquina] += venta
                 ventas_por_dia[dia] += venta
 
-        total_ventas = sum(ventas)
-        total_egresos = sum(egresos)
-        profit_semanal = sum(netos)
-        dias_activos = sum(1 for v in ventas if v > 0)
-        promedio_dia = round(total_ventas / dias_activos, 2) if dias_activos else 0
-        fondo_emergencia = round(profit_semanal * 0.05)
+    if st.button("💾 Guardar semana"):
+        cursor.executemany("INSERT INTO resumen_semanal VALUES (?, ?, ?, ?, ?)", registros)
+        conn.commit()
+        st.success("✅ Semana guardada correctamente")
 
-        st.markdown("---")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("🔢 Total Semana", f"${total_ventas}")
-        col2.metric("💰 Profit Semanal", f"${profit_semanal}")
-        col3.metric("📈 Promedio/Día", f"${promedio_dia}")
-        col4.metric("🛟 Fondo Emergencia (5%)", f"${fondo_emergencia}")
+    # Selector de semana registrada
+    semanas_registradas = pd.read_sql_query("SELECT DISTINCT semana FROM resumen_semanal ORDER BY semana DESC", conn)
+    if not semanas_registradas.empty:
+        semana_seleccionada = st.selectbox("📅 Ver datos de semana registrada", semanas_registradas["semana"])
+        df = pd.read_sql_query("SELECT * FROM resumen_semanal WHERE semana = ?", conn, params=(semana_seleccionada,))
+        st.markdown(f"## 📊 Datos de la semana: {semana_seleccionada}")
+        st.dataframe(df)
 
-    # Gráfica: Ventas por máquina
-    st.markdown("## 📊 Ventas totales por máquina en la semana")
-    df_maquinas = pd.DataFrame({
-        "Máquina": list(ventas_por_maquina.keys()),
-        "Ventas": list(ventas_por_maquina.values())
-    })
-    st.bar_chart(df_maquinas.set_index("Máquina"))
+        # Gráfica por máquina
+        df_maquinas = df.groupby("maquina")["ventas"].sum().reset_index()
+        fig1 = px.bar(df_maquinas, x="maquina", y="ventas", title="Ventas totales por máquina", color="maquina", color_discrete_sequence=["#007A5E"])
+        st.plotly_chart(fig1, use_container_width=True)
 
-    # Gráfica: Días con más ventas
-    st.markdown("## 📈 Días con más ventas en la semana")
-    df_dias = pd.DataFrame({
-        "Día": list(ventas_por_dia.keys()),
-        "Ventas": list(ventas_por_dia.values())
-    })
-    st.line_chart(df_dias.set_index("Día"))
+        # Gráfica por día
+        df_dias = df.groupby("dia")["ventas"].sum().reset_index()
+        fig2 = px.line(df_dias, x="dia", y="ventas", title="Días con más ventas en la semana", markers=True)
+        st.plotly_chart(fig2, use_container_width=True)
 
-# Sección: Dashboard semanal
+# Sección: Dashboard (sin cambios)
 elif opcion == "Dashboard":
     st.markdown("### 📊 Análisis semanal")
-    df = pd.read_sql_query("SELECT * FROM ventas_diarias ORDER BY fecha DESC", conn)
-
+    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
     if not df.empty:
-        semana = df.tail(6)
-        profit = semana["total"].sum() - semana["egresos"].sum()
+        semana_actual = df["semana"].max()
+        semana = df[df["semana"] == semana_actual]
+        profit = (semana["ventas"] - semana["egresos"]).sum()
         fondo_emergencia = round(profit * 0.05)
 
         st.metric("💰 Profit semanal", f"${profit}")
         st.metric("🛟 Fondo de emergencia (5%)", f"${fondo_emergencia}")
-        st.markdown("**Fórmula del fondo de emergencia:**")
         st.latex(r"\text{Fondo} = (\text{Ventas} - \text{Egresos}) \times 0.05")
 
-        maquinas = ["maquina_agua", "maquina_cafe", "maquina_jugo", "maquina_galletas", "maquina_barra", "maquina_energizante"]
-        totales = {m: semana[m].sum() for m in maquinas}
-        df_maquinas = pd.DataFrame(list(totales.items()), columns=["Máquina", "Ventas"])
-        df_maquinas["Máquina"] = df_maquinas["Máquina"].str.replace("maquina_", "").str.capitalize()
-
-        fig = px.bar(df_maquinas, x="Máquina", y="Ventas", color="Máquina", title="Máquinas más vendidas esta semana", color_discrete_sequence=["#007A5E"])
+        df_maquinas = semana.groupby("maquina")["ventas"].sum().reset_index()
+        fig = px.bar(df_maquinas, x="maquina", y="ventas", title="Máquinas más vendidas esta semana", color="maquina", color_discrete_sequence=["#007A5E"])
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No hay datos registrados aún.")
 
-# Sección: Historial
+# Sección: Historial (sin cambios)
 elif opcion == "Historial":
     st.markdown("### 📋 Historial completo")
-    df = pd.read_sql_query("SELECT * FROM ventas_diarias ORDER BY fecha DESC", conn)
+    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
     st.dataframe(df)
 
-# Sección: Reportes
+# Sección: Reportes (sin cambios)
 elif opcion == "Reportes":
     st.markdown("### 📥 Descargar reporte")
-    df = pd.read_sql_query("SELECT * FROM ventas_diarias ORDER BY fecha DESC", conn)
+    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
     csv = df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="Descargar CSV",
         data=csv,
-        file_name="ventas_diarias.csv",
+        file_name="resumen_semanal.csv",
         mime="text/csv",
         help="Descarga el historial en formato Excel"
     )
