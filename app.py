@@ -48,42 +48,46 @@ CREATE TABLE IF NOT EXISTS ventas_diarias (
 """)
 conn.commit()
 
-# Sección: Ventas Diarias
+# Sección: Ventas Diarias (nuevo diseño tipo tabla)
 if opcion == "Ventas Diarias":
-    st.markdown("## 🧮 Ingresar Ventas del Día")
-    fecha = st.date_input("Fecha", value=date.today())
+    st.markdown("## 📋 Registro Semanal por Máquina")
+    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    maquinas = [
+        "Máquina 1 - Norte", "Máquina 2", "Máquina 3", "Máquina 4",
+        "Máquina 5", "Máquina 6", "Máquina 7", "Máquina 8"
+    ]
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        agua = st.number_input("Máquina Agua", min_value=0, step=1)
-        galletas = st.number_input("Máquina Galletas", min_value=0, step=1)
-    with col2:
-        cafe = st.number_input("Máquina Café", min_value=0, step=1)
-        barra = st.number_input("Máquina Barras", min_value=0, step=1)
-    with col3:
-        jugo = st.number_input("Máquina Jugo", min_value=0, step=1)
-        energizante = st.number_input("Máquina Energizante", min_value=0, step=1)
+    for maquina in maquinas:
+        st.markdown(f"### {maquina}")
+        ventas = []
+        egresos = []
+        netos = []
 
-    egresos = st.number_input("💸 Egresos del día", min_value=0, step=1)
-    total = agua + cafe + jugo + galletas + barra + energizante
+        cols = st.columns(len(dias))
+        for i, dia in enumerate(dias):
+            with cols[i]:
+                st.markdown(f"**{dia}**")
+                venta = st.number_input(f"Ventas", min_value=0, step=1, key=f"{maquina}_{dia}_v")
+                egreso = st.number_input(f"Egresos", min_value=0, step=1, key=f"{maquina}_{dia}_e")
+                neto = venta - egreso
+                st.write(f"Neto: ${neto}")
+                ventas.append(venta)
+                egresos.append(egreso)
+                netos.append(neto)
 
-    st.metric("🧾 Total ventas", f"{total} unidades")
+        total_ventas = sum(ventas)
+        total_egresos = sum(egresos)
+        profit_semanal = sum(netos)
+        dias_activos = sum(1 for v in ventas if v > 0)
+        promedio_dia = round(total_ventas / dias_activos, 2) if dias_activos else 0
+        fondo_emergencia = round(profit_semanal * 0.05)
 
-    cursor.execute("SELECT fecha FROM ventas_diarias WHERE fecha = ?", (str(fecha),))
-    existe = cursor.fetchone()
-
-    if existe:
-        st.warning("⚠️ Ya hay ventas registradas para esta fecha.")
-    elif st.button("Guardar ventas"):
-        cursor.execute("""
-            INSERT INTO ventas_diarias (
-                fecha, maquina_agua, maquina_cafe, maquina_jugo,
-                maquina_galletas, maquina_barra, maquina_energizante,
-                egresos, total
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (str(fecha), agua, cafe, jugo, galletas, barra, energizante, egresos, total))
-        conn.commit()
-        st.success("✅ Ventas guardadas correctamente")
+        st.markdown("---")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("🔢 Total Semana", f"${total_ventas}")
+        col2.metric("💰 Profit Semanal", f"${profit_semanal}")
+        col3.metric("📈 Promedio/Día", f"${promedio_dia}")
+        col4.metric("🛟 Fondo Emergencia (5%)", f"${fondo_emergencia}")
 
 # Sección: Dashboard semanal
 elif opcion == "Dashboard":
@@ -91,7 +95,7 @@ elif opcion == "Dashboard":
     df = pd.read_sql_query("SELECT * FROM ventas_diarias ORDER BY fecha DESC", conn)
 
     if not df.empty:
-        semana = df.tail(6)  # Últimos 6 días (lunes a sábado)
+        semana = df.tail(6)
         profit = semana["total"].sum() - semana["egresos"].sum()
         fondo_emergencia = round(profit * 0.05)
 
@@ -100,7 +104,6 @@ elif opcion == "Dashboard":
         st.markdown("**Fórmula del fondo de emergencia:**")
         st.latex(r"\text{Fondo} = (\text{Ventas} - \text{Egresos}) \times 0.05")
 
-        # Máquina más vendida
         maquinas = ["maquina_agua", "maquina_cafe", "maquina_jugo", "maquina_galletas", "maquina_barra", "maquina_energizante"]
         totales = {m: semana[m].sum() for m in maquinas}
         df_maquinas = pd.DataFrame(list(totales.items()), columns=["Máquina", "Ventas"])
