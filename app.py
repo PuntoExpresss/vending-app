@@ -4,7 +4,6 @@ import plotly.express as px
 import sqlite3
 from datetime import date, timedelta
 import io
-from xhtml2pdf import pisa
 
 # Configuración visual
 st.set_page_config(page_title="Sistema de Vending", page_icon="🟢", layout="wide")
@@ -104,17 +103,6 @@ if opcion == "Ventas Diarias":
             data=excel_buffer.getvalue(),
             file_name=f"reporte_{semana_seleccionada}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        # Exportar a PDF
-        html = f"<h1>Reporte Semana {semana_seleccionada}</h1>{df.to_html(index=False)}"
-        pdf_buffer = io.BytesIO()
-        pisa.CreatePDF(io.StringIO(html), dest=pdf_buffer)
-        st.download_button(
-            label="📄 Exportar a PDF",
-            data=pdf_buffer.getvalue(),
-            file_name=f"reporte_{semana_seleccionada}.pdf",
-            mime="application/pdf"
         )
 
 # Sección: Dashboard
