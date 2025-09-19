@@ -120,4 +120,26 @@ elif opcion == "Dashboard":
         st.latex(r"\text{Fondo} = (\text{Ventas} - \text{Egresos}) \times 0.05")
 
         df_maquinas = semana.groupby("maquina")["ventas"].sum().reset_index()
-        fig = px.bar(df_maquinas, x="maquina", y="ventas", title
+        fig = px.bar(df_maquinas, x="maquina", y="ventas", title="Máquinas más vendidas esta semana", color="maquina", color_discrete_sequence=["#007A5E"])
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No hay datos registrados aún.")
+
+# Sección: Historial (sin cambios)
+elif opcion == "Historial":
+    st.markdown("### 📋 Historial completo")
+    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
+    st.dataframe(df)
+
+# Sección: Reportes (sin cambios)
+elif opcion == "Reportes":
+    st.markdown("### 📥 Descargar reporte")
+    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Descargar CSV",
+        data=csv,
+        file_name="resumen_semanal.csv",
+        mime="text/csv",
+        help="Descarga el historial en formato Excel"
+    )
