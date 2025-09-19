@@ -132,4 +132,29 @@ elif opcion == "Dashboard":
 
         maquinas = ["maquina_agua", "maquina_cafe", "maquina_jugo", "maquina_galletas", "maquina_barra", "maquina_energizante"]
         totales = {m: semana[m].sum() for m in maquinas}
-        df_maquinas = pd.DataFrame(list(totales.items()),
+        df_maquinas = pd.DataFrame(list(totales.items()), columns=["Máquina", "Ventas"])
+        df_maquinas["Máquina"] = df_maquinas["Máquina"].str.replace("maquina_", "").str.capitalize()
+
+        fig = px.bar(df_maquinas, x="Máquina", y="Ventas", color="Máquina", title="Máquinas más vendidas esta semana", color_discrete_sequence=["#007A5E"])
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No hay datos registrados aún.")
+
+# Sección: Historial
+elif opcion == "Historial":
+    st.markdown("### 📋 Historial completo")
+    df = pd.read_sql_query("SELECT * FROM ventas_diarias ORDER BY fecha DESC", conn)
+    st.dataframe(df)
+
+# Sección: Reportes
+elif opcion == "Reportes":
+    st.markdown("### 📥 Descargar reporte")
+    df = pd.read_sql_query("SELECT * FROM ventas_diarias ORDER BY fecha DESC", conn)
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Descargar CSV",
+        data=csv,
+        file_name="ventas_diarias.csv",
+        mime="text/csv",
+        help="Descarga el historial en formato Excel"
+    )
