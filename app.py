@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 import sqlite3
 from datetime import date, timedelta
+import io
+from xhtml2pdf import pisa
 
 # Configuración visual
 st.set_page_config(page_title="Sistema de Vending", page_icon="🟢", layout="wide")
@@ -40,7 +42,7 @@ CREATE TABLE IF NOT EXISTS resumen_semanal (
 """)
 conn.commit()
 
-# Sección: Ventas Diarias (actualizada)
+# Sección: Ventas Diarias
 if opcion == "Ventas Diarias":
     st.markdown("## 📋 Registro Semanal por Máquina")
     fecha_lunes = st.date_input("Selecciona el lunes de la semana", help="Elige el lunes para registrar la semana")
@@ -93,7 +95,29 @@ if opcion == "Ventas Diarias":
         fig2 = px.line(df_dias, x="dia", y="ventas", title="Días con más ventas en la semana", markers=True)
         st.plotly_chart(fig2, use_container_width=True)
 
-# Sección: Dashboard (sin cambios)
+        # Exportar a Excel
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Semana')
+        st.download_button(
+            label="📥 Exportar a Excel",
+            data=excel_buffer.getvalue(),
+            file_name=f"reporte_{semana_seleccionada}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        # Exportar a PDF
+        html = f"<h1>Reporte Semana {semana_seleccionada}</h1>{df.to_html(index=False)}"
+        pdf_buffer = io.BytesIO()
+        pisa.CreatePDF(io.StringIO(html), dest=pdf_buffer)
+        st.download_button(
+            label="📄 Exportar a PDF",
+            data=pdf_buffer.getvalue(),
+            file_name=f"reporte_{semana_seleccionada}.pdf",
+            mime="application/pdf"
+        )
+
+# Sección: Dashboard
 elif opcion == "Dashboard":
     st.markdown("### 📊 Análisis semanal")
     df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
@@ -113,13 +137,13 @@ elif opcion == "Dashboard":
     else:
         st.info("No hay datos registrados aún.")
 
-# Sección: Historial (sin cambios)
+# Sección: Historial
 elif opcion == "Historial":
     st.markdown("### 📋 Historial completo")
     df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
     st.dataframe(df)
 
-# Sección: Reportes (sin cambios)
+# Sección: Reportes
 elif opcion == "Reportes":
     st.markdown("### 📥 Descargar reporte")
     df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
