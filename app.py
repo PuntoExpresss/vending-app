@@ -97,6 +97,8 @@ elif opcion == "Dashboard":
 
         st.metric("💰 Profit semanal", f"${profit}")
         st.metric("🛟 Fondo de emergencia (5%)", f"${fondo_emergencia}")
+        st.markdown("**Fórmula del fondo de emergencia:**")
+        st.latex(r"\text{Fondo} = (\text{Ventas} - \text{Egresos}) \times 0.05")
 
         # Máquina más vendida
         maquinas = ["maquina_agua", "maquina_cafe", "maquina_jugo", "maquina_galletas", "maquina_barra", "maquina_energizante"]
