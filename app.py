@@ -15,22 +15,6 @@ festivos_2025 = {
 
 # Configuración visual
 st.set_page_config(page_title="Sistema de Vending", page_icon="🟢", layout="wide")
-st.markdown("""
-    <style>
-    .main { background-color: #F5F5F5; }
-    h1, h2, h3 { color: #007A5E; }
-    .stButton>button {
-        background-color: #007A5E;
-        color: white;
-        border: none;
-        padding: 0.5em 1em;
-        font-weight: bold;
-    }
-    .stSidebar { background-color: #FFFFFF; }
-    </style>
-""", unsafe_allow_html=True)
-
-# Sidebar
 st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Green_circle_icon.svg/1024px-Green_circle_icon.svg.png", width=60)
 st.sidebar.title("Menú")
 opcion = st.sidebar.radio("Ir a:", ["Dashboard", "Ventas Semanales", "Historial", "Reportes"])
@@ -155,4 +139,19 @@ elif opcion == "Dashboard":
 
 # Sección: Historial
 elif opcion == "Historial":
-    st.markdown("### 📋 Hist
+    st.markdown("### 📋 Historial completo")
+    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY fecha DESC", conn)
+    st.dataframe(df)
+
+# Sección: Reportes
+elif opcion == "Reportes":
+    st.markdown("### 📥 Descargar reporte")
+    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY fecha DESC", conn)
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Descargar CSV",
+        data=csv,
+        file_name="resumen_semanal.csv",
+        mime="text/csv",
+        help="Descarga el historial completo en formato Excel"
+    )
