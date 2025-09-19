@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS resumen_semanal (
 """)
 conn.commit()
 
-# Sección: Ventas Diarias
+# Sección: Ventas Diarias (actualizada)
 if opcion == "Ventas Diarias":
     st.markdown("## 📋 Registro Semanal por Máquina")
     fecha_lunes = st.date_input("Selecciona el lunes de la semana", help="Elige el lunes para registrar la semana")
@@ -94,9 +94,9 @@ if opcion == "Ventas Diarias":
         fig2 = px.line(df_dias, x="dia", y="ventas", title="Días con más ventas en la semana", markers=True)
         st.plotly_chart(fig2, use_container_width=True)
 
-        # Exportar a Excel
+        # Exportar a Excel (usando openpyxl)
         excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name='Semana')
         st.download_button(
             label="📥 Exportar a Excel",
@@ -105,7 +105,7 @@ if opcion == "Ventas Diarias":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-# Sección: Dashboard
+# Sección: Dashboard (sin cambios)
 elif opcion == "Dashboard":
     st.markdown("### 📊 Análisis semanal")
     df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
@@ -120,26 +120,4 @@ elif opcion == "Dashboard":
         st.latex(r"\text{Fondo} = (\text{Ventas} - \text{Egresos}) \times 0.05")
 
         df_maquinas = semana.groupby("maquina")["ventas"].sum().reset_index()
-        fig = px.bar(df_maquinas, x="maquina", y="ventas", title="Máquinas más vendidas esta semana", color="maquina", color_discrete_sequence=["#007A5E"])
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No hay datos registrados aún.")
-
-# Sección: Historial
-elif opcion == "Historial":
-    st.markdown("### 📋 Historial completo")
-    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
-    st.dataframe(df)
-
-# Sección: Reportes
-elif opcion == "Reportes":
-    st.markdown("### 📥 Descargar reporte")
-    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY semana DESC", conn)
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="Descargar CSV",
-        data=csv,
-        file_name="resumen_semanal.csv",
-        mime="text/csv",
-        help="Descarga el historial en formato Excel"
-    )
+        fig = px.bar(df_maquinas, x="maquina", y="ventas", title
