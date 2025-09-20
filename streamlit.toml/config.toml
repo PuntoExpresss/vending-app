@@ -1,0 +1,7 @@
+[theme]
+base="light"
+primaryColor="#1b5e20"  # Verde oscuro
+backgroundColor="#f5f5f5"  # Fondo claro
+secondaryBackgroundColor="#e0e0e0"  # Sidebar claro
+textColor="#212121"  # Gris oscuro para buen contraste
+font="sans serif"
