@@ -20,19 +20,33 @@ st.set_page_config(
     page_icon="🟢",
     layout="wide"
 )
+
+# Estilos personalizados
 st.markdown("""
     <style>
+    /* Fondo oscuro del menú lateral */
     [data-testid="stSidebar"] {
-        background-color: #e6f4ea;
+        background-color: #1e1e1e;
         padding: 20px;
     }
+
+    /* Forzar color blanco en todo el texto del sidebar */
+    [data-testid="stSidebar"] * {
+        color: white !important;
+    }
+
+    /* Título principal */
     .main-title {
         font-size: 36px;
         font-weight: 700;
-        color: #007A5E;
+        color: #00c853;
         margin-bottom: 0.5rem;
     }
+
+    /* Ocultar footer de Streamlit */
     footer {visibility: hidden;}
+
+    /* Texto flotante en el pie de página */
     .footer-text {
         position: fixed;
         bottom: 10px;
@@ -42,6 +56,8 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+# Título corporativo
 st.markdown(
     '<div class="main-title">🟢 Punto Express - Sistema de Vending</div>',
     unsafe_allow_html=True
