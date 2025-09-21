@@ -1,8 +1,18 @@
 [theme]
-base="dark"
-primaryColor="#00c853"              # Verde brillante (acentos y botones)
-backgroundColor="#121212"           # Fondo principal oscuro
-secondaryBackgroundColor="#1e1e1e"  # Fondo del menú lateral (sidebar)
-textColor="#ffffff"                 # Texto blanco
-font="sans serif"
+primaryColor = "#00c853"
+backgroundColor = "#1e1e1e"
+secondaryBackgroundColor = "#2e2e2e"
+textColor = "#ffffff"
+font = "sans serif"
 
+[server]
+headless = true
+enableCORS = false
+port = 8501
+
+[client]
+showSidebarNavigation = true
+
+[ui]
+initialSidebarState = "auto"
+hideSidebarNav = false
