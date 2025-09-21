@@ -18,7 +18,8 @@ festivos_2025 = {
 st.set_page_config(
     page_title="Punto Express | Sistema de Vending",
     page_icon="🟢",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # Estilos personalizados
@@ -27,12 +28,27 @@ st.markdown("""
     /* Fondo oscuro del menú lateral */
     [data-testid="stSidebar"] {
         background-color: #1e1e1e;
-        padding: 20px;
+        padding: 25px 20px;
+        border-right: 1px solid #333;
     }
 
     /* Forzar color blanco en todo el texto del sidebar */
     [data-testid="stSidebar"] * {
-        color: white !important;
+        color: #ffffff !important;
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+    /* Ocultar íconos rotos o imágenes vacías */
+    [data-testid="stSidebar"] img {
+        display: none !important;
+    }
+
+    /* Efecto hover en elementos del menú */
+    [data-testid="stSidebar"] a:hover {
+        background-color: #2e2e2e;
+        border-radius: 5px;
+        padding: 4px 8px;
+        text-decoration: none;
     }
 
     /* Título principal */
@@ -41,10 +57,13 @@ st.markdown("""
         font-weight: 700;
         color: #00c853;
         margin-bottom: 0.5rem;
+        font-family: 'Segoe UI', sans-serif;
     }
 
     /* Ocultar footer de Streamlit */
-    footer {visibility: hidden;}
+    footer, .st-emotion-cache-h5rgaw {
+        visibility: hidden;
+    }
 
     /* Texto flotante en el pie de página */
     .footer-text {
@@ -53,6 +72,18 @@ st.markdown("""
         right: 20px;
         font-size: 12px;
         color: #888;
+        font-family: 'Segoe UI', sans-serif;
+    }
+
+    /* Ocultar tooltips automáticos como "key" sin bloquear clic */
+    [data-testid="collapsedControl"] [title],
+    [data-testid="collapsedControl"] [aria-label] {
+        display: none !important;
+    }
+
+    /* Ocultar texto residual como "key" dentro del botón de colapso */
+    [data-testid="collapsedControl"] span {
+        visibility: hidden !important;
     }
     </style>
 """, unsafe_allow_html=True)
