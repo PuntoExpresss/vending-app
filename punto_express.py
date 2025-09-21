@@ -81,9 +81,19 @@ st.markdown("""
         display: none !important;
     }
 
-    /* Ocultar texto residual como "key" dentro del botón de colapso */
+    /* Intento de ocultar texto residual "key" */
     [data-testid="collapsedControl"] span {
         visibility: hidden !important;
+    }
+
+    [data-testid="collapsedControl"] span::after {
+        content: "☰";
+        font-size: 20px;
+        color: #00c853;
+        font-weight: bold;
+        position: absolute;
+        top: 0;
+        left: 0;
     }
     </style>
 """, unsafe_allow_html=True)
