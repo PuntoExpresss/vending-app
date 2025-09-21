@@ -735,8 +735,108 @@ elif opcion == "Rotación":
             file_name=f"rotacion_{maquina_sel}_semana_{semana_sel}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
 #
+# Mantenimiento
+#
+elif opcion == "Mantenimiento":
+    st.title("🛠️ Mantenimiento por Máquina")
+
+    # Asegurar que la tabla 'maquina' existe
+    cursor.execute("""CREATE TABLE IF NOT EXISTS maquina (nombre_maquina TEXT PRIMARY KEY)""")
+    conn.commit()
+
+    # Obtener máquinas disponibles
+    cursor.execute("SELECT nombre_maquina FROM maquina")
+    maquinas_disponibles = sorted(set(row[0] for row in cursor.fetchall() if row[0]))
+
+    # Detectar cambio de máquina y reiniciar campos
+    if "maquina_anterior_mant" not in st.session_state:
+        st.session_state.maquina_anterior_mant = None
+
+    maquina_sel = st.selectbox("Selecciona la máquina", maquinas_disponibles)
+    fecha_mant = st.date_input("Fecha del mantenimiento", value=date.today())
+    semana_mant = st.number_input("Semana ISO", min_value=1, max_value=52, value=fecha_mant.isocalendar()[1])
+
+    if st.session_state.maquina_anterior_mant != maquina_sel:
+        st.session_state.maquina_anterior_mant = maquina_sel
+        st.session_state.tipo_mant = "Preventivo"
+        st.session_state.descripcion_mant = ""
+        st.session_state.costo_mant = 0.0
+
+    # Crear tabla de mantenimiento si no existe
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS mantenimiento (
+            fecha TEXT,
+            semana TEXT,
+            maquina TEXT,
+            tipo TEXT,
+            descripcion TEXT,
+            costo REAL
+        )
+    """)
+    conn.commit()
+
+    # Verificar si la columna 'semana' existe y agregarla si no
+    try:
+        cursor.execute("SELECT semana FROM mantenimiento LIMIT 1")
+    except:
+        cursor.execute("ALTER TABLE mantenimiento ADD COLUMN semana TEXT")
+        conn.commit()
+
+    # Registro de mantenimiento
+    with st.expander("➕ Registrar mantenimiento"):
+        tipo_mant = st.selectbox("Tipo de mantenimiento", ["Preventivo", "Correctivo", "Otro"], key="tipo_mant")
+        descripcion = st.text_area("Descripción del trabajo realizado", key="descripcion_mant")
+        costo_mant = st.number_input("Costo total", min_value=0.0, value=st.session_state.costo_mant, key="costo_mant")
+
+        if st.button("📌 Guardar mantenimiento"):
+            cursor.execute("""
+                INSERT INTO mantenimiento (fecha, semana, maquina, tipo, descripcion, costo)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                str(fecha_mant), str(semana_mant), maquina_sel, tipo_mant, descripcion, costo_mant
+            ))
+            conn.commit()
+            st.success("Mantenimiento registrado correctamente.")
+
+    # Historial de mantenimientos por semana
+    st.subheader("📋 Historial de mantenimientos")
+    df_mantenimiento = pd.read_sql_query(
+        "SELECT * FROM mantenimiento WHERE maquina = ? AND semana = ? ORDER BY fecha DESC",
+        conn, params=(maquina_sel, str(semana_mant))
+    )
+
+    if df_mantenimiento.empty:
+        st.warning("No hay mantenimientos registrados para esta máquina en la semana seleccionada.")
+    else:
+        st.dataframe(df_mantenimiento, use_container_width=True)
+
+        # Total invertido y cantidad de mantenimientos
+        total_mantenimiento = df_mantenimiento["costo"].sum()
+        cantidad_mantenimientos = len(df_mantenimiento)
+
+        st.info(f"🔧 Total invertido esta semana: ${total_mantenimiento:,.0f}")
+        st.success(f"🧮 Número de mantenimientos realizados: {cantidad_mantenimientos}")
+
+    # 🟠 Alerta por frecuencia excesiva
+    if cantidad_mantenimientos > 3:
+        st.warning("🟠 Alerta: esta máquina ha recibido más de 3 mantenimientos esta semana. Revisa si hay fallas recurrentes.")
+
+    # 🟢 Nota positiva si no hubo mantenimiento
+    if cantidad_mantenimientos == 0:
+        st.info("🟢 Esta máquina no ha requerido mantenimiento esta semana. ¡Buen desempeño!")
+
+        # Exportar historial
+        buf_mant = io.BytesIO()
+        with pd.ExcelWriter(buf_mant, engine="openpyxl") as writer:
+            df_mantenimiento.to_excel(writer, index=False, sheet_name=f"Mantenimiento_{maquina_sel}")
+        st.download_button(
+            "📥 Exportar historial a Excel",
+            data=buf_mant.getvalue(),
+            file_name=f"mantenimiento_{maquina_sel}_semana_{semana_mant}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+#   
 # Reportes
 #
 if opcion == "Reportes":
