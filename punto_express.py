@@ -23,116 +23,124 @@ st.set_page_config(
 )
 
 # Estilos personalizados
-st.markdown("""
-    <style>
-    /* Fondo oscuro del menú lateral */
-    [data-testid="stSidebar"] {
-        background-color: #1e1e1e;
-        padding: 25px 20px;
-        border-right: 1px solid #333;
-    }
+st.markdown("""<style>
+/* Fondo oscuro del menú lateral */
+[data-testid="stSidebar"] {
+    background-color: #121212;
+    padding: 25px 20px;
+    border-right: 1px solid #333;
+}
 
-    /* Forzar color blanco en todo el texto del sidebar */
-    [data-testid="stSidebar"] * {
-        color: #ffffff !important;
-        font-family: 'Segoe UI', sans-serif;
-    }
+/* Texto blanco y tipografía profesional */
+[data-testid="stSidebar"] * {
+    color: #ffffff !important;
+    font-family: 'Segoe UI', sans-serif;
+}
 
-    /* Ocultar íconos rotos o imágenes vacías */
-    [data-testid="stSidebar"] img {
-        display: none !important;
-    }
+/* Hover en opciones del menú */
+[data-testid="stSidebar"] a:hover {
+    background-color: #2e2e2e;
+    border-radius: 5px;
+    padding: 4px 8px;
+    text-decoration: none;
+}
 
-    /* Efecto hover en elementos del menú */
-    [data-testid="stSidebar"] a:hover {
-        background-color: #2e2e2e;
-        border-radius: 5px;
-        padding: 4px 8px;
-        text-decoration: none;
-    }
+/* Ocultar íconos rotos o imágenes vacías */
+[data-testid="stSidebar"] img {
+    display: none !important;
+}
 
-    /* Título principal */
-    .main-title {
-        font-size: 36px;
-        font-weight: 700;
-        color: #00c853;
-        margin-bottom: 0.5rem;
-        font-family: 'Segoe UI', sans-serif;
-    }
+/* Título principal */
+.main-title {
+    font-size: 36px;
+    font-weight: 700;
+    color: #00c853;
+    margin-bottom: 0.5rem;
+    font-family: 'Segoe UI', sans-serif;
+}
+/* Ocultar tooltips automáticos como "key" sin bloquear clic */
+[data-testid="collapsedControl"] [title],
+[data-testid="collapsedControl"] [aria-label] {
+    display: none !important;
+}
 
-    /* Ocultar footer de Streamlit */
-    footer, .st-emotion-cache-h5rgaw {
-        visibility: hidden;
-    }
+/* Ocultar texto residual "key" */
+[data-testid="collapsedControl"] span {
+    visibility: hidden !important;
+}
 
-    /* Texto flotante en el pie de página */
-    .footer-text {
-        position: fixed;
-        bottom: 10px;
-        right: 20px;
-        font-size: 12px;
-        color: #888;
-        font-family: 'Segoe UI', sans-serif;
-    }
+/* Reemplazar con ícono personalizado tipo hamburguesa */
+[data-testid="collapsedControl"] span::after {
+    content: "☰";
+    font-size: 20px;
+    color: #00c853;
+    font-weight: bold;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
 
-    /* Ocultar tooltips automáticos como "key" sin bloquear clic */
-    [data-testid="collapsedControl"] [title],
-    [data-testid="collapsedControl"] [aria-label] {
-        display: none !important;
-    }
+/* Pie de página flotante */
+.footer-text {
+    position: fixed;
+    bottom: 10px;
+    right: 20px;
+    font-size: 12px;
+    color: #888;
+    font-family: 'Segoe UI', sans-serif;
+}
+</style>""", unsafe_allow_html=True)
 
-    /* Intento de ocultar texto residual "key" */
-    [data-testid="collapsedControl"] span {
-        visibility: hidden !important;
-    }
-
-    [data-testid="collapsedControl"] span::after {
-        content: "☰";
-        font-size: 20px;
-        color: #00c853;
-        font-weight: bold;
-        position: absolute;
-        top: 0;
-        left: 0;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# Título corporativo
-st.markdown(
-    '<div class="main-title">🟢 Punto Express - Sistema de Vending</div>',
-    unsafe_allow_html=True
-)
+# Título corporativo en el cuerpo principal
+st.markdown('<div class="main-title">🟢 Punto Express - Sistema de Vending</div>', unsafe_allow_html=True)
 st.markdown("---")
+
+# Nombre de empresa en el menú lateral
+st.sidebar.markdown("""
+    <div style='font-size:24px; font-weight:bold; color:#00c853; font-family:Segoe UI, sans-serif;'>
+        🟢 Punto Express
+    </div>
+    <div style='font-size:16px; color:#ccc; font-family:Segoe UI, sans-serif;'>
+        Sistema de Vending
+    </div>
+""", unsafe_allow_html=True)
 
 # Conexión a la base de datos
 conn = sqlite3.connect("ventas_semanales.db")
 cursor = conn.cursor()
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS resumen_semanal (
-    semana TEXT,
-    fecha TEXT,
-    maquina TEXT,
-    dia TEXT,
-    ventas INTEGER,
-    egresos INTEGER
-)
+    CREATE TABLE IF NOT EXISTS resumen_semanal (
+        semana TEXT,
+        fecha TEXT,
+        maquina TEXT,
+        dia TEXT,
+        ventas INTEGER,
+        egresos INTEGER
+    )
+""")
+# Conexión a la base de datos
+conn = sqlite3.connect("ventas_semanales.db")
+cursor = conn.cursor()
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS resumen_semanal (
+        semana TEXT,
+        fecha TEXT,
+        maquina TEXT,
+        dia TEXT,
+        ventas INTEGER,
+        egresos INTEGER
+    )
 """)
 conn.commit()
 
-# Simulación de ventas (Semana 38) – solo si no existen registros
+# Simulación de datos si no existen
 semana_sim = "Semana 38"
 cursor.execute("SELECT COUNT(*) FROM resumen_semanal WHERE semana = ?", (semana_sim,))
-existe = cursor.fetchone()[0]
-
-if existe == 0:
+if cursor.fetchone()[0] == 0:
     año_sim = 2025
     lunes_sim = date.fromisocalendar(año_sim, 38, 1)
     fechas_sim = [lunes_sim + timedelta(days=i) for i in range(6)]
-    maquinas_sim = [
-        "Motomall", "Unidad", "Norte", "Buses",
-        "Paquetex", "Dekohouse", "Caldas", "Maquina 8"
-    ]
+    maquinas_sim = ["Motomall", "Unidad", "Norte", "Buses", "Paquetex", "Dekohouse", "Caldas", "Maquina 8"]
     registros_sim = []
     for maquina in maquinas_sim:
         for i, fecha in enumerate(fechas_sim):
@@ -140,28 +148,53 @@ if existe == 0:
             ventas = random.randint(10000, 30000)
             egresos = random.randint(2000, 8000)
             registros_sim.append((semana_sim, str(fecha), maquina, dia, ventas, egresos))
-    cursor.executemany(
-        "INSERT INTO resumen_semanal VALUES (?, ?, ?, ?, ?, ?)",
-        registros_sim
-    )
+    cursor.executemany("INSERT INTO resumen_semanal VALUES (?, ?, ?, ?, ?, ?)", registros_sim)
     conn.commit()
 
-# Menú lateral
-st.sidebar.image(
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5f/Green_check_icon.svg/1024px-Green_check_icon.svg.png",
-    width=60
-)
-st.sidebar.markdown("## 🟢 Punto Express")
-st.sidebar.markdown("### Sistema de Vending")
-opcion = st.sidebar.radio(
-    "📋 Navegación:",
-    ["Dashboard", "Ventas Semanales", "Reabastecimiento", "Historial", "Reportes"]
-)
+def grafico_tendencia_semanal(df, festivos):
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    df_agrupado = df.groupby("fecha")["ventas"].sum().reset_index()
+    df_agrupado["promedio_movil"] = df_agrupado["ventas"].rolling(window=3).mean()
+
+    fig = px.line(df_agrupado, x="fecha", y="ventas", title="Tendencia semanal de ventas",
+                  markers=True, labels={"fecha": "Fecha", "ventas": "Ventas ($)"})
+    fig.add_scatter(x=df_agrupado["fecha"], y=df_agrupado["promedio_movil"],
+                    mode="lines", name="Promedio móvil (3 días)",
+                    line=dict(dash="dash", color="#00c853"))
+    festivos_dt = pd.to_datetime(list(festivos))
+    for f in festivos_dt:
+        if f in df_agrupado["fecha"].values:
+            fig.add_vline(x=f, line_width=1, line_dash="dot", line_color="red",
+                          annotation_text="Festivo", annotation_position="top left")
+    fig.update_layout(template="plotly_dark", xaxis_title="Día", yaxis_title="Ventas ($)")
+    return fig
+
+def exportar_grafico(fig):
+    buffer = io.BytesIO()
+    fig.write_image(buffer, format="png")
+    buffer.seek(0)
+    st.download_button(
+        label="📥 Descargar gráfica",
+        data=buffer,
+        file_name="tendencia_semanal.png",
+        mime="image/png"
+    )
+
+# Menú de navegación
+opcion = st.sidebar.radio("📋 Navegación:", [
+    "Dashboard",
+    "Control Ventas",
+    "Reabastecimiento",
+    "Rotación",
+    "Mantenimiento",
+    "Reportes"
+], key="menu_navegacion")
+
+# Pie de página flotante
 st.markdown(
     '<div class="footer-text">© Punto Express | Última actualización: Septiembre 2025</div>',
     unsafe_allow_html=True
 )
-
 #
 # Dashboard
 #
@@ -533,28 +566,242 @@ if opcion == "Reabastecimiento":
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 #
-# Historial
+# Rotación
 #
-elif opcion == "Historial":
-    st.markdown("### 📋 Historial Completo de Ventas")
-    df_h = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY fecha DESC", conn)
-    st.dataframe(df_h)
+elif opcion == "Rotación":
+    st.title("🔁 Rotación por Máquina")
+
+    # Crear tabla 'maquina' si no existe
+    cursor.execute("""CREATE TABLE IF NOT EXISTS maquina (nombre_maquina TEXT PRIMARY KEY)""")
+    conn.commit()
+
+    # Poblar tabla 'maquina' si está vacía
+    cursor.execute("SELECT COUNT(*) FROM maquina")
+    if cursor.fetchone()[0] == 0:
+        maquinas_sim = ["Motomall", "Unidad", "Norte", "Buses", "Paquetex", "Dekohouse", "Caldas", "Maquina 8"]
+        for nombre in maquinas_sim:
+            cursor.execute("INSERT OR IGNORE INTO maquina (nombre_maquina) VALUES (?)", (nombre,))
+        conn.commit()
+
+    # Obtener máquinas desde la tabla 'maquina'
+    cursor.execute("SELECT nombre_maquina FROM maquina")
+    maquinas_disponibles = sorted(set(row[0] for row in cursor.fetchall() if row[0]))
+
+    # Selectores
+    maquina_sel = st.selectbox("Selecciona la máquina", maquinas_disponibles)
+    fecha_sel = st.date_input("Selecciona una fecha", value=date.today())
+    semana_sel = st.number_input("Semana ISO", min_value=1, max_value=52, value=fecha_sel.isocalendar()[1])
+
+    # Funciones de cálculo
+    def calcular_precio_unitario(costo_compra, unidad_compra, unidades_por_paquete=6):
+        if unidad_compra == "unidad":
+            return costo_compra
+        elif unidad_compra == "docena":
+            return costo_compra / 12
+        elif unidad_compra == "paquete":
+            return costo_compra / unidades_por_paquete
+        else:
+            return costo_compra
+
+    def calcular_gasto(costo_compra, unidad_compra, cantidad_vendida, unidades_por_paquete=6):
+        precio_unitario = calcular_precio_unitario(costo_compra, unidad_compra, unidades_por_paquete)
+        return precio_unitario * cantidad_vendida
+
+    # Registro manual de producto vendido
+    with st.expander("➕ Registrar producto vendido"):
+        producto_nuevo = st.text_input("Producto")
+        cantidad_nueva = st.number_input("Cantidad vendida", min_value=1, value=1)
+        costo_compra = st.number_input("Costo total de compra", min_value=0, value=1200)
+        unidad_compra = st.selectbox("Unidad de compra", ["unidad", "docena", "paquete"])
+        unidades_por_paquete = st.number_input("Unidades por paquete", min_value=1, value=6) if unidad_compra == "paquete" else 6
+
+        precio_unitario_preview = calcular_precio_unitario(costo_compra, unidad_compra, unidades_por_paquete)
+        st.info(f"💡 Precio unitario calculado: ${precio_unitario_preview:,.0f}")
+
+        if st.button("📌 Guardar producto"):
+            cursor.execute("INSERT INTO rotacion_producto VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (
+                str(semana_sel), str(fecha_sel), maquina_sel, producto_nuevo,
+                cantidad_nueva, precio_unitario_preview, costo_compra, unidad_compra
+            ))
+            conn.commit()
+            st.success("Producto registrado correctamente.")
+
+    # Cargar y filtrar datos
+    df_rotacion = pd.read_sql_query(
+        "SELECT * FROM rotacion_producto WHERE semana = ? AND maquina = ?",
+        conn, params=(str(semana_sel), maquina_sel)
+    )
+
+    if df_rotacion.empty:
+        st.warning("No hay datos de rotación para esta máquina en la semana seleccionada.")
+    else:
+        df_rotacion["unidades_por_paquete"] = df_rotacion["unidad_compra"].apply(lambda u: 6 if u == "paquete" else None)
+        df_rotacion["precio_unitario"] = df_rotacion.apply(
+            lambda row: calcular_precio_unitario(row["costo_compra"], row["unidad_compra"],
+                                                 row["unidades_por_paquete"] if row["unidad_compra"] == "paquete" else 6),
+            axis=1
+        )
+        df_rotacion["gasto_total"] = df_rotacion.apply(
+            lambda row: calcular_gasto(row["costo_compra"], row["unidad_compra"], row["cantidad"],
+                                       row["unidades_por_paquete"] if row["unidad_compra"] == "paquete" else 6),
+            axis=1
+        )
+        df_rotacion["margen_unitario"] = df_rotacion["valor_unitario"] - df_rotacion["precio_unitario"]
+
+        # 🔔 Alertas inteligentes
+        alertas = []
+        margen_total = df_rotacion["valor_unitario"].sum() - df_rotacion["gasto_total"].sum()
+        if margen_total < 0:
+            st.error("⚠️ Margen negativo: estás gastando más de lo que vendes en esta máquina.")
+            alertas.append(["Margen negativo", "El gasto total supera el ingreso por ventas."])
+
+        # 📋 Resumen financiero
+        st.subheader("📋 Resumen financiero semanal")
+        df_resumen_gasto = df_rotacion.groupby(["producto", "unidad_compra"]).agg({
+            "costo_compra": "sum"
+        }).reset_index()
+        total_inversion_semana = df_resumen_gasto["costo_compra"].sum()
+        st.success(f"🔔 Total invertido en compras esta semana: ${total_inversion_semana:,.0f}")
+        df_resumen_gasto["porcentaje_inversion"] = (
+            df_resumen_gasto["costo_compra"] / total_inversion_semana
+        ) * 100
+        st.markdown("### 💸 Inversión por producto (según unidad de compra)")
+        st.dataframe(df_resumen_gasto.sort_values("costo_compra", ascending=False), use_container_width=True)
+
+        # Resumen general para exportación
+        resumen_general = pd.DataFrame({
+            "Indicador": ["💰 Total vendido", "📦 Total gastado", "📈 Margen operativo"],
+            "Valor": [f"${df_rotacion['valor_unitario'].sum():,.0f}",
+                      f"${df_rotacion['gasto_total'].sum():,.0f}",
+                      f"${margen_total:,.0f}"]
+        })
+        # 📊 Resumen detallado por producto
+        st.subheader("📦 Productos más vendidos esta semana")
+        df_resumen = df_rotacion.groupby(["producto", "unidad_compra"]).agg({
+            "cantidad": "sum",
+            "precio_unitario": "mean",
+            "gasto_total": "sum",
+            "valor_unitario": "sum"
+        }).reset_index()
+        df_resumen["margen_total"] = df_resumen["valor_unitario"] - df_resumen["gasto_total"]
+
+        st.dataframe(df_resumen.sort_values("cantidad", ascending=False), use_container_width=True)
+
+        # 🏆 Ranking de productos más vendidos
+        fig_cantidad = px.bar(
+            df_resumen.sort_values("cantidad", ascending=False),
+            x="producto", y="cantidad", color="unidad_compra",
+            title="Productos más vendidos por cantidad",
+            text="cantidad"
+        )
+        fig_cantidad.update_layout(template="plotly_dark")
+        st.plotly_chart(fig_cantidad, use_container_width=True)
+
+        # 💸 Ranking de inversión por producto (compra real)
+        fig_inversion_real = px.bar(
+            df_resumen_gasto.sort_values("costo_compra", ascending=False),
+            x="producto", y="costo_compra", color="unidad_compra",
+            title="Inversión total por producto (según unidad de compra)",
+            text="costo_compra",
+            labels={"costo_compra": "Costo total de compra", "producto": "Producto"}
+        )
+        fig_inversion_real.update_layout(template="plotly_dark")
+        st.plotly_chart(fig_inversion_real, use_container_width=True)
+
+        # 📈 Ranking de margen operativo (con color rojo si negativo)
+        df_resumen["color_margen"] = df_resumen["margen_total"].apply(
+            lambda x: "red" if x < 0 else "#00c853"
+        )
+        fig_margen = px.bar(
+            df_resumen.sort_values("margen_total", ascending=False),
+            x="producto", y="margen_total", color="color_margen",
+            title="Margen operativo semanal por producto",
+            text="margen_total",
+            color_discrete_map="identity"
+        )
+        fig_margen.update_layout(template="plotly_dark", showlegend=False)
+        st.plotly_chart(fig_margen, use_container_width=True)
+
+        # 📥 Exportar a Excel
+        buf_rotacion = io.BytesIO()
+        with pd.ExcelWriter(buf_rotacion, engine="openpyxl") as writer:
+            df_rotacion.to_excel(writer, index=False, sheet_name=f"Rotación_{maquina_sel}")
+            resumen_general.to_excel(writer, index=False, sheet_name="Resumen_Financiero")
+            df_resumen_gasto.to_excel(writer, index=False, sheet_name="Inversión_por_Producto")
+            df_resumen.to_excel(writer, index=False, sheet_name="Ranking_Productos")
+        st.download_button(
+            "📥 Exportar rotación a Excel",
+            data=buf_rotacion.getvalue(),
+            file_name=f"rotacion_{maquina_sel}_semana_{semana_sel}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 #
 # Reportes
 #
-elif opcion == "Reportes":
-    st.markdown("### 📥 Gestionar Reportes")
-    if st.button("🔄 Borrar simulación Semana 38"):
-        cursor.execute("DELETE FROM resumen_semanal WHERE semana = ?", ("Semana 38",))
-        conn.commit()
-        st.success("✅ Datos de simulación eliminados")
+if opcion == "Reportes":
+    st.title("📊 Reportes Semanales")
 
-    df_r = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY fecha DESC", conn)
-    csv = df_r.to_csv(index=False).encode("utf-8")
+    cursor.execute("SELECT fecha, ventas FROM resumen_semanal WHERE semana = ?", (semana_sim,))
+    df_ventas = pd.DataFrame(cursor.fetchall(), columns=["fecha", "ventas"])
+
+    cursor.execute("""
+        SELECT fecha, dia, maquina, ventas, egresos
+        FROM resumen_semanal
+        WHERE semana = ?
+    """, (semana_sim,))
+    df_detalle = pd.DataFrame(cursor.fetchall(), columns=["fecha", "dia", "maquina", "ventas", "egresos"])
+    df_detalle["neto"] = df_detalle["ventas"] - df_detalle["egresos"]
+
+    tv = df_detalle["ventas"].sum()
+    te = df_detalle["egresos"].sum()
+    tn = df_detalle["neto"].sum()
+    dv = df_detalle[df_detalle["ventas"] > 0]["fecha"].nunique()
+    pdia = round(tv / dv, 2) if dv else 0
+    ft = round(tn * 0.05)
+    dia_top = df_detalle.groupby("dia")["neto"].sum().sort_values(ascending=False).index[0]
+
+    st.subheader("📈 Tendencia de ventas semanales")
+    fig1 = grafico_tendencia_semanal(df_ventas, festivos_2025)
+    st.plotly_chart(fig1, use_container_width=True)
+    exportar_grafico(fig1)
+
+    st.subheader("🏭 Comparativa por máquina")
+    df_m = df_detalle.groupby("maquina")["ventas"].sum().reset_index()
+    fig2 = px.bar(df_m, x="maquina", y="ventas", title="Ventas por máquina", color="maquina")
+    fig2.update_layout(template="plotly_dark")
+    st.plotly_chart(fig2, use_container_width=True)
+
+    st.subheader("📋 Resumen ejecutivo")
+    resumen = pd.DataFrame({
+        "Indicador": [
+            "🔢 Total Ventas", "📉 Total Egresos", "💰 Profit Neto",
+            "📈 Promedio Diario", "🛟 Fondo Emergencia (5%)",
+            "📆 Día más rentable"
+        ],
+        "Valor": [
+            f"${tv:,}", f"${te:,}", f"${tn:,}",
+            f"${pdia:,}", f"${ft:,}", dia_top
+        ]
+    })
+    st.dataframe(resumen, use_container_width=True)
+
+    buf_reportes = io.BytesIO()
+    with pd.ExcelWriter(buf_reportes, engine="openpyxl") as writer:
+        df_ventas.to_excel(writer, index=False, sheet_name="Tendencia")
+        df_m.to_excel(writer, index=False, sheet_name="Por Máquina")
+        df_detalle.to_excel(writer, index=False, sheet_name="Detalle")
+        resumen.to_excel(writer, index=False, sheet_name="Resumen")
     st.download_button(
-        "📄 Descargar CSV",
-        data=csv,
-        file_name="resumen_semanal.csv",
-        mime="text/csv"
+        "📥 Exportar Reporte a Excel",
+        data=buf_reportes.getvalue(),
+        file_name=f"reporte_semanal_{semana_sim}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+# Pie de página flotante
+st.markdown("""
+    <div class="footer-text">
+        © Punto Express | Última actualización: Septiembre 2025
+    </div>
+""", unsafe_allow_html=True)
