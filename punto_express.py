@@ -341,12 +341,16 @@ import io
 if opcion == "Control Ventas":
     st.title("📆 Informe Semanal Editable")
 
+    # Semana actual por defecto
+    semana_actual = date.today().isocalendar()[1]
+    año_actual = date.today().year
+
     # Selección de semana
     col1, col2 = st.columns(2)
     with col1:
-        semana_num = st.number_input("Número de semana", 1, 52, 38)
+        semana_num = st.number_input("Número de semana", 1, 52, semana_actual)
     with col2:
-        año = st.number_input("Año", 2020, 2030, 2025)
+        año = st.number_input("Año", 2020, 2030, año_actual)
 
     lunes = date.fromisocalendar(año, semana_num, 1)
     fechas = [lunes + timedelta(days=i) for i in range(6)]  # lunes a sábado
@@ -442,9 +446,10 @@ if opcion == "Control Ventas":
         c4.metric("📈 Promedio diario", f"${pdia}")
         c5.metric("🛟 Fondo 5%", f"${ft}")
 
-        # 🟠 Alerta si hay más de 3 días sin ventas
-        dias_sin_ventas = df_actualizada[df_actualizada["ventas"] == 0]["fecha"].nunique()
-        if dias_sin_ventas > 3:
+        # 🟠 Alerta corregida: días sin ventas reales
+        ventas_por_dia = df_actualizada.groupby("fecha")["ventas"].sum()
+        dias_sin_ventas = (ventas_por_dia == 0).sum()
+        if dias_sin_ventas > 0:
             st.warning(f"🟠 Alerta: hay {dias_sin_ventas} días sin ventas esta semana.")
 
         # 🟢 Nota si todas las máquinas registraron ventas
@@ -493,7 +498,7 @@ if opcion == "Control Ventas":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        # 📥 Exportar resumen ejecutivo
+                # 📥 Exportar resumen ejecutivo
         buf_resumen = io.BytesIO()
         with pd.ExcelWriter(buf_resumen, engine="openpyxl") as writer:
             resumen.to_excel(writer, index=False, sheet_name="Resumen")
@@ -503,6 +508,28 @@ if opcion == "Control Ventas":
             file_name=f"resumen_semana_{semana_num}_{año}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+    # 📊 Resumen mensual por semana
+    df_mensual = pd.read_sql_query("SELECT semana, fecha, ventas FROM resumen_semanal", conn)
+    df_mensual["fecha"] = pd.to_datetime(df_mensual["fecha"])
+    df_mensual["mes"] = df_mensual["fecha"].dt.strftime("%B")
+    df_mensual["semana_num"] = df_mensual["fecha"].dt.isocalendar().week
+
+    resumen_semanal = df_mensual.groupby(["mes", "semana_num"])["ventas"].sum().reset_index()
+    resumen_semanal = resumen_semanal.sort_values(by=["semana_num"])
+
+    st.markdown("### 📅 Totales por semana agrupados por mes")
+    st.dataframe(resumen_semanal.rename(columns={
+        "mes": "Mes",
+        "semana_num": "Semana",
+        "ventas": "Total Ventas"
+    }), use_container_width=True)
+
+    # ⚠️ Alerta por semanas con ventas bajas
+    semanas_bajas = resumen_semanal[resumen_semanal["ventas"] < 10000]
+    if not semanas_bajas.empty:
+        st.warning(f"⚠️ Atención: {len(semanas_bajas)} semana(s) con ventas menores a $10,000.")
+
 
 # 🧭 Nueva sección: Reabastecimiento Inteligente
 if opcion == "Reabastecimiento":
