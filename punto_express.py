@@ -333,12 +333,12 @@ if opcion == "Dashboard":
     else:
         st.info("No hay datos registrados aún.")
 #
-# ventas Semanales
+# Control Ventas
 # 
 from datetime import date, timedelta
 import io
 
-if opcion == "Ventas Semanales":
+if opcion == "Control Ventas":
     st.title("📆 Informe Semanal Editable")
 
     # Selección de semana
@@ -352,6 +352,19 @@ if opcion == "Ventas Semanales":
     fechas = [lunes + timedelta(days=i) for i in range(6)]  # lunes a sábado
     dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
     st.subheader(f"📅 Semana {semana_num}: {fechas[0]} a {fechas[-1]}")
+
+    # Crear tabla si no existe
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS resumen_semanal (
+            semana TEXT,
+            fecha TEXT,
+            maquina TEXT,
+            dia TEXT,
+            ventas INTEGER,
+            egresos INTEGER
+        )
+    """)
+    conn.commit()
 
     # Cargar datos existentes
     df_exist = pd.read_sql_query(
@@ -399,7 +412,7 @@ if opcion == "Ventas Semanales":
         )
         conn.commit()
         cursor.executemany(
-            "INSERT INTO resumen_semanal VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO resumen_semanal (semana, fecha, maquina, dia, ventas, egresos) VALUES (?, ?, ?, ?, ?, ?)",
             registros
         )
         conn.commit()
@@ -429,6 +442,17 @@ if opcion == "Ventas Semanales":
         c4.metric("📈 Promedio diario", f"${pdia}")
         c5.metric("🛟 Fondo 5%", f"${ft}")
 
+        # 🟠 Alerta si hay más de 3 días sin ventas
+        dias_sin_ventas = df_actualizada[df_actualizada["ventas"] == 0]["fecha"].nunique()
+        if dias_sin_ventas > 3:
+            st.warning(f"🟠 Alerta: hay {dias_sin_ventas} días sin ventas esta semana.")
+
+        # 🟢 Nota si todas las máquinas registraron ventas
+        maquinas_con_ventas = df_actualizada[df_actualizada["ventas"] > 0]["maquina"].unique()
+        if set(maquinas_con_ventas) == set(maquinas):
+            st.success("🟢 Todas las máquinas registraron ventas esta semana. ¡Buen desempeño!")
+
+        # Gráficos
         df_d = df_actualizada.groupby("dia")["ventas"].sum().reset_index()
         fig1 = px.bar(df_d, x="dia", y="ventas", title="📅 Días con más ventas", color="dia")
         st.plotly_chart(fig1, use_container_width=True)
@@ -817,14 +841,6 @@ elif opcion == "Mantenimiento":
 
         st.info(f"🔧 Total invertido esta semana: ${total_mantenimiento:,.0f}")
         st.success(f"🧮 Número de mantenimientos realizados: {cantidad_mantenimientos}")
-
-    # 🟠 Alerta por frecuencia excesiva
-    if cantidad_mantenimientos > 3:
-        st.warning("🟠 Alerta: esta máquina ha recibido más de 3 mantenimientos esta semana. Revisa si hay fallas recurrentes.")
-
-    # 🟢 Nota positiva si no hubo mantenimiento
-    if cantidad_mantenimientos == 0:
-        st.info("🟢 Esta máquina no ha requerido mantenimiento esta semana. ¡Buen desempeño!")
 
         # Exportar historial
         buf_mant = io.BytesIO()
