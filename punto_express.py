@@ -201,7 +201,9 @@ st.markdown(
 from fpdf import FPDF
 import io
 from datetime import date
-import re  # Para limpiar emojis del PDF
+import re
+import pandas as pd
+import plotly.express as px
 
 def limpiar_unicode(texto):
     return re.sub(r'[^\x00-\x7F]+', '', texto)
@@ -211,40 +213,33 @@ if opcion == "Dashboard":
     df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY fecha DESC", conn)
 
     if not df.empty:
-        # 🔢 Preparar semanas
         df["semana_num"] = df["semana"].str.extract(r'(\d+)').astype(int)
         semana_actual = df["semana_num"].max()
         semana_anterior = semana_actual - 1
 
-        # 📊 Datos semana actual
         df_sem = df[df["semana_num"] == semana_actual].copy()
         df_sem["neto"] = df_sem["ventas"] - df_sem["egresos"]
         profit = df_sem["neto"].sum()
         fondo = round(profit * 0.05)
 
-        # 📊 Datos semana anterior
         df_prev = df[df["semana_num"] == semana_anterior].copy()
         ventas_actual = df_sem["ventas"].sum()
         ventas_prev = df_prev["ventas"].sum()
         variacion = round(((ventas_actual - ventas_prev) / ventas_prev) * 100, 2) if ventas_prev else 0
 
-        # 📈 Métricas principales
         st.metric("💰 Profit semanal", f"${profit}")
         st.metric("🛟 Fondo emergencia (5%)", f"${fondo}")
         st.metric("📈 Ventas vs semana anterior", f"${ventas_actual:,.0f}", f"{variacion:+.2f}%")
 
-        # 📊 Gráfico por máquina
         df_maq = df_sem.groupby("maquina")["ventas"].sum().reset_index()
         fig = px.bar(df_maq, x="maquina", y="ventas", title=f"Máquinas más vendidas - Semana {semana_actual}", color="maquina")
         st.plotly_chart(fig, use_container_width=True)
 
-        # 📊 Comparativa entre semanas
         df_comp = df[df["semana_num"].isin([semana_anterior, semana_actual])]
         df_comp_sum = df_comp.groupby(["semana_num", "maquina"])["ventas"].sum().reset_index()
         fig2 = px.bar(df_comp_sum, x="maquina", y="ventas", color="semana_num", barmode="group", title="📊 Comparativa por máquina (2 semanas)")
         st.plotly_chart(fig2, use_container_width=True)
 
-        # 🚨 Alertas inteligentes
         lista_alertas = []
         ventas_actual_por_maquina = df_sem.groupby("maquina")["ventas"].sum()
         ventas_prev_por_maquina = df_prev.groupby("maquina")["ventas"].sum()
@@ -271,7 +266,6 @@ if opcion == "Dashboard":
                 for alerta in lista_alertas:
                     st.warning(alerta)
 
-        # 📋 Construir resumen para PDF
         resumen = pd.DataFrame({
             "Métrica": [
                 "Total Ventas", "Total Egresos", "Profit Neto",
@@ -286,7 +280,6 @@ if opcion == "Dashboard":
             ]
         })
 
-        # 🧾 Clase PDF personalizada
         class PDF(FPDF):
             def header(self):
                 self.set_font("Arial", "B", 16)
@@ -302,7 +295,6 @@ if opcion == "Dashboard":
                 self.set_text_color(100)
                 self.cell(0, 10, f"Generado el {date.today()}", align="C")
 
-        # 📄 Generar PDF
         pdf = PDF()
         pdf.add_page()
         pdf.set_font("Arial", size=11)
@@ -320,7 +312,6 @@ if opcion == "Dashboard":
                 texto_limpio = limpiar_unicode(alerta)
                 pdf.multi_cell(0, 10, f"- {texto_limpio}")
 
-        # 📥 Botón de descarga
         pdf_bytes = pdf.output(dest='S').encode('latin-1')
         st.markdown("### 📄 Exportación PDF")
         st.download_button(
@@ -330,8 +321,36 @@ if opcion == "Dashboard":
             mime="application/pdf"
         )
 
+        # 📊 Panel de métricas semanales por mes
+        st.markdown("### 📊 Panel de métricas semanales por mes")
+
+        df_mensual = pd.read_sql_query("SELECT semana, fecha, ventas FROM resumen_semanal", conn)
+        df_mensual["fecha"] = pd.to_datetime(df_mensual["fecha"])
+        df_mensual["mes"] = df_mensual["fecha"].dt.strftime("%B")
+        df_mensual["semana_num"] = df_mensual["fecha"].dt.isocalendar().week
+
+        df_semanal = df_mensual.groupby(["mes", "semana_num"])["ventas"].sum().reset_index()
+        df_semanal = df_semanal.sort_values(by="semana_num").reset_index(drop=True)
+
+        df_semanal["variacion"] = df_semanal["ventas"].pct_change().fillna(0) * 100
+        df_semanal["color"] = df_semanal["variacion"].apply(lambda x: "🟢" if x > 0 else ("🔴" if x < 0 else "⚪"))
+
+        for mes in df_semanal["mes"].unique():
+            st.markdown(f"#### 📅 {mes}")
+            semanas_mes = df_semanal[df_semanal["mes"] == mes]
+            cols = st.columns(len(semanas_mes))
+            for i, row in semanas_mes.iterrows():
+                with cols[i % len(cols)]:
+                    st.metric(
+                        label=f"Semana {int(row['semana_num'])}",
+                        value=f"${row['ventas']:,.0f}",
+                        delta=f"{row['color']} {row['variacion']:+.1f}%",
+                        delta_color="normal"
+                    )
+
     else:
         st.info("No hay datos registrados aún.")
+
 #
 # Control Ventas
 # 
