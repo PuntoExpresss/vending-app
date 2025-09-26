@@ -22,72 +22,61 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilos personalizados
+# Estilos personalizados (paleta: negro, gris, blanco, verde)
 st.markdown("""<style>
-/* Fondo oscuro del menú lateral */
-[data-testid="stSidebar"] {
-    background-color: #121212;
-    padding: 25px 20px;
-    border-right: 1px solid #333;
+/* Sidebar background y texto */
+[data-testid="stSidebar"] > div:first-child {
+  background: linear-gradient(180deg, #000000 0%, #1f1f1f 100%) !important;
+  color: #ffffff !important;
 }
 
-/* Texto blanco y tipografía profesional */
-[data-testid="stSidebar"] * {
-    color: #ffffff !important;
-    font-family: 'Segoe UI', sans-serif;
+/* Título y subtítulo en sidebar (si hay clases diferentes, esto mantiene el color) */
+[data-testid="stSidebar"] .css-1lcbmhc,
+[data-testid="stSidebar"] .css-ng1t4o,
+[data-testid="stSidebar"] .css-10trblm {
+  color: #ffffff !important;
 }
 
-/* Hover en opciones del menú */
-[data-testid="stSidebar"] a:hover {
-    background-color: #2e2e2e;
-    border-radius: 5px;
-    padding: 4px 8px;
-    text-decoration: none;
+/* Texto de los items del menú */
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .css-1d391kg,
+[data-testid="stSidebar"] .css-1v3fvcr,
+[data-testid="stSidebar"] .stRadio {
+  color: #e6e6e6 !important;
 }
 
-/* Ocultar íconos rotos o imágenes vacías */
-[data-testid="stSidebar"] img {
-    display: none !important;
+/* Fondo del item seleccionado y hover (resalte verde) */
+[data-testid="stSidebar"] .css-1v3fvcr:focus,
+[data-testid="stSidebar"] .css-1v3fvcr:active,
+[data-testid="stSidebar"] .css-1v3fvcr:hover,
+[data-testid="stSidebar"] [role="radiogroup"] > div[aria-checked="true"] {
+  background: linear-gradient(90deg, rgba(0,200,83,0.12), rgba(0,200,83,0.06)) !important;
+  border-left: 4px solid #00c853 !important;
+  color: #ffffff !important;
 }
 
-/* Título principal */
-.main-title {
-    font-size: 36px;
-    font-weight: 700;
-    color: #00c853;
-    margin-bottom: 0.5rem;
-    font-family: 'Segoe UI', sans-serif;
-}
-/* Ocultar tooltips automáticos como "key" sin bloquear clic */
-[data-testid="collapsedControl"] [title],
-[data-testid="collapsedControl"] [aria-label] {
-    display: none !important;
+/* Links y botones verdes */
+a, .stButton>button, .css-1v0mbdj button {
+  color: #00c853 !important;
 }
 
-/* Ocultar texto residual "key" */
-[data-testid="collapsedControl"] span {
-    visibility: hidden !important;
+/* Ajustar color de iconos SVG en sidebar */
+[data-testid="stSidebar"] svg { fill: #00c853 !important; }
+
+/* Contenido principal: NO tocar (se mantiene por defecto) */
+/* No aplicar cambios al contenedor principal para evitar fondo oscuro accidental */
+
+/* Footer pequeño */
+.footer-text { color: #bdbdbd; font-size:12px; }
+
+/* Forzar contraste en textos y encabezados dentro del sidebar */
+[data-testid="stSidebar"] span, [data-testid="stSidebar"] p, [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2 {
+  color: #f5f5f5 !important;
 }
 
-/* Reemplazar con ícono personalizado tipo hamburguesa */
-[data-testid="collapsedControl"] span::after {
-    content: "☰";
-    font-size: 20px;
-    color: #00c853;
-    font-weight: bold;
-    position: absolute;
-    top: 0;
-    left: 0;
-}
-
-/* Pie de página flotante */
-.footer-text {
-    position: fixed;
-    bottom: 10px;
-    right: 20px;
-    font-size: 12px;
-    color: #888;
-    font-family: 'Segoe UI', sans-serif;
+/* Ajustes responsivos: mantener legibilidad en mobile */
+@media (max-width: 600px) {
+  [data-testid="stSidebar"] > div:first-child { padding-left: 12px !important; padding-right: 12px !important; }
 }
 </style>""", unsafe_allow_html=True)
 
@@ -106,20 +95,7 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 
 # Conexión a la base de datos
-conn = sqlite3.connect("ventas_semanales.db")
-cursor = conn.cursor()
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS resumen_semanal (
-        semana TEXT,
-        fecha TEXT,
-        maquina TEXT,
-        dia TEXT,
-        ventas INTEGER,
-        egresos INTEGER
-    )
-""")
-# Conexión a la base de datos
-conn = sqlite3.connect("ventas_semanales.db")
+conn = sqlite3.connect("ventas_semanales.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS resumen_semanal (
@@ -132,6 +108,36 @@ cursor.execute("""
     )
 """)
 conn.commit()
+
+# 🔧 Mejora: función para sincronizar egresos desde rotación
+def sincronizar_egreso_en_ventas(maquina, fecha, monto):
+    dia_semana = date.fromisoformat(fecha).strftime("%A")
+    dia_map = {
+        "Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles",
+        "Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo"
+    }
+    dia = dia_map.get(dia_semana, dia_semana)
+    semana_iso = date.fromisoformat(fecha).isocalendar()[1]
+    semana_txt = f"Semana {semana_iso}"
+
+    cursor.execute("""
+        SELECT egresos FROM resumen_semanal
+        WHERE maquina = ? AND fecha = ?
+    """, (maquina, fecha))
+    resultado = cursor.fetchone()
+
+    if resultado:
+        cursor.execute("""
+            UPDATE resumen_semanal
+            SET egresos = egresos + ?
+            WHERE maquina = ? AND fecha = ?
+        """, (monto, maquina, fecha))
+    else:
+        cursor.execute("""
+            INSERT INTO resumen_semanal (semana, fecha, maquina, dia, ventas, egresos)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (semana_txt, fecha, maquina, dia, 0, monto))
+    conn.commit()
 
 # Simulación de datos si no existen
 semana_sim = "Semana 38"
@@ -641,11 +647,71 @@ if opcion == "Reabastecimiento":
 elif opcion == "Rotación":
     st.title("🔁 Rotación por Máquina")
 
-    # Crear tabla 'maquina' si no existe
+    # --- Migración local y aseguramiento de tablas mínimas (solo dentro de esta sección) ---
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='rotacion_producto'")
+    if not cursor.fetchone():
+        cursor.execute("""
+            CREATE TABLE rotacion_producto (
+                semana TEXT,
+                fecha TEXT,
+                maquina TEXT,
+                producto TEXT,
+                cantidad INTEGER,
+                precio_unitario REAL,
+                costo_compra REAL,
+                unidad_compra TEXT,
+                unidades_por_paquete INTEGER
+            )
+        """)
+        conn.commit()
+    else:
+        cursor.execute("PRAGMA table_info(rotacion_producto)")
+        cols = [r[1] for r in cursor.fetchall()]
+        if "unidades_por_paquete" not in cols:
+            cursor.execute("ALTER TABLE rotacion_producto ADD COLUMN unidades_por_paquete INTEGER")
+            conn.commit()
+        if "precio_unitario" not in cols:
+            cursor.execute("ALTER TABLE rotacion_producto ADD COLUMN precio_unitario REAL")
+            conn.commit()
+            rows = cursor.execute("SELECT rowid, costo_compra, unidad_compra, unidades_por_paquete FROM rotacion_producto").fetchall()
+            for row in rows:
+                rowid, costo_compra, unidad_compra, unidades_por_paquete = row
+                try:
+                    c = float(costo_compra) if costo_compra is not None else 0.0
+                except:
+                    c = 0.0
+                up = int(unidades_por_paquete) if unidades_por_paquete not in (None, 0) else 6
+                if unidad_compra == "unidad" or unidad_compra is None:
+                    precio = c
+                elif unidad_compra == "docena":
+                    precio = c / 12.0
+                elif unidad_compra == "paquete":
+                    precio = c / up
+                else:
+                    precio = c
+                cursor.execute("UPDATE rotacion_producto SET precio_unitario = ?, unidades_por_paquete = ? WHERE rowid = ?", (precio, up, rowid))
+            conn.commit()
+
+    # Asegurar egreso_auto en resumen_semanal si existe la tabla
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='resumen_semanal'")
+    if cursor.fetchone():
+        cursor.execute("PRAGMA table_info(resumen_semanal)")
+        cols_rs = [r[1] for r in cursor.fetchall()]
+        if "egreso_auto" not in cols_rs:
+            cursor.execute("ALTER TABLE resumen_semanal ADD COLUMN egreso_auto INTEGER DEFAULT 0")
+            conn.commit()
+
+    # Crear catálogo de productos si no existe
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='producto_catalog'")
+    if not cursor.fetchone():
+        cursor.execute("CREATE TABLE producto_catalog (producto TEXT PRIMARY KEY)")
+        conn.commit()
+
+    # Asegurar tabla maquina mínima
     cursor.execute("""CREATE TABLE IF NOT EXISTS maquina (nombre_maquina TEXT PRIMARY KEY)""")
     conn.commit()
 
-    # Poblar tabla 'maquina' si está vacía
+    # Popular máquinas si están vacías
     cursor.execute("SELECT COUNT(*) FROM maquina")
     if cursor.fetchone()[0] == 0:
         maquinas_sim = ["Motomall", "Unidad", "Norte", "Buses", "Paquetex", "Dekohouse", "Caldas", "Maquina 8"]
@@ -653,50 +719,181 @@ elif opcion == "Rotación":
             cursor.execute("INSERT OR IGNORE INTO maquina (nombre_maquina) VALUES (?)", (nombre,))
         conn.commit()
 
-    # Obtener máquinas desde la tabla 'maquina'
     cursor.execute("SELECT nombre_maquina FROM maquina")
     maquinas_disponibles = sorted(set(row[0] for row in cursor.fetchall() if row[0]))
 
     # Selectores
     maquina_sel = st.selectbox("Selecciona la máquina", maquinas_disponibles)
     fecha_sel = st.date_input("Selecciona una fecha", value=date.today())
-    semana_sel = st.number_input("Semana ISO", min_value=1, max_value=52, value=fecha_sel.isocalendar()[1])
+    semana_sel = st.number_input("Semana ISO", min_value=1, max_value=52, value=fecha_sel.isocalendar()[1], key=f"sem_iso_{maquina_sel}_{str(fecha_sel)}")
 
     # Funciones de cálculo
     def calcular_precio_unitario(costo_compra, unidad_compra, unidades_por_paquete=6):
+        try:
+            costo = float(costo_compra)
+        except:
+            return 0.0
         if unidad_compra == "unidad":
-            return costo_compra
-        elif unidad_compra == "docena":
-            return costo_compra / 12
-        elif unidad_compra == "paquete":
-            return costo_compra / unidades_por_paquete
-        else:
-            return costo_compra
+            return costo
+        if unidad_compra == "docena":
+            return costo / 12.0
+        if unidad_compra == "paquete":
+            return costo / unidades_por_paquete
+        return costo
 
     def calcular_gasto(costo_compra, unidad_compra, cantidad_vendida, unidades_por_paquete=6):
-        precio_unitario = calcular_precio_unitario(costo_compra, unidad_compra, unidades_por_paquete)
-        return precio_unitario * cantidad_vendida
+        precio_unit = calcular_precio_unitario(costo_compra, unidad_compra, unidades_por_paquete)
+        try:
+            return precio_unit * float(cantidad_vendida)
+        except:
+            return 0.0
 
-    # Registro manual de producto vendido
+    # --- Registrar producto vendido (con catálogo que guarda nombre tal cual) ---
     with st.expander("➕ Registrar producto vendido"):
-        producto_nuevo = st.text_input("Producto")
-        cantidad_nueva = st.number_input("Cantidad vendida", min_value=1, value=1)
-        costo_compra = st.number_input("Costo total de compra", min_value=0, value=1200)
-        unidad_compra = st.selectbox("Unidad de compra", ["unidad", "docena", "paquete"])
-        unidades_por_paquete = st.number_input("Unidades por paquete", min_value=1, value=6) if unidad_compra == "paquete" else 6
+        cursor.execute("SELECT producto FROM producto_catalog ORDER BY producto COLLATE NOCASE")
+        productos_guardados = [r[0] for r in cursor.fetchall()]
+
+        producto_seleccionado = st.selectbox("Elegir producto (o escribe uno nuevo abajo)", ["-- Nuevo producto --"] + productos_guardados, key=f"select_prod_new_{maquina_sel}_{str(fecha_sel)}")
+        producto_nuevo_text = st.text_input("Producto (nuevo o igual al seleccionado)", value=(producto_seleccionado if producto_seleccionado != "-- Nuevo producto --" else ""), key=f"prod_text_new_{maquina_sel}_{str(fecha_sel)}")
+        producto_nuevo = producto_nuevo_text.strip()
+
+        cantidad_nueva = st.number_input("Cantidad vendida", min_value=1, value=1, step=1, key=f"cantidad_nuevo_{maquina_sel}_{str(fecha_sel)}")
+        costo_compra = st.number_input("Costo total de compra", min_value=0.0, value=1200.0, step=100.0, format="%.2f", key=f"costo_nuevo_{maquina_sel}_{str(fecha_sel)}")
+        unidad_compra = st.selectbox("Unidad de compra", ["unidad", "docena", "paquete"], key=f"unidad_nuevo_{maquina_sel}_{str(fecha_sel)}")
+        unidades_por_paquete = st.number_input("Unidades por paquete", min_value=1, value=6, key=f"up_nuevo_{maquina_sel}_{str(fecha_sel)}") if unidad_compra == "paquete" else 6
 
         precio_unitario_preview = calcular_precio_unitario(costo_compra, unidad_compra, unidades_por_paquete)
-        st.info(f"💡 Precio unitario calculado: ${precio_unitario_preview:,.0f}")
+        st.info(f"💡 Precio unitario calculado: ${precio_unitario_preview:,.2f}")
 
-        if st.button("📌 Guardar producto"):
-            cursor.execute("INSERT INTO rotacion_producto VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (
-                str(semana_sel), str(fecha_sel), maquina_sel, producto_nuevo,
-                cantidad_nueva, precio_unitario_preview, costo_compra, unidad_compra
-            ))
-            conn.commit()
-            st.success("Producto registrado correctamente.")
+        if st.button("📌 Guardar producto", key=f"guardar_nuevo_{maquina_sel}_{str(fecha_sel)}"):
+            if not producto_nuevo:
+                st.error("El nombre del producto no puede estar vacío.")
+            elif cantidad_nueva <= 0 or costo_compra <= 0:
+                st.error("Cantidad y costo deben ser mayores a cero.")
+            else:
+                try:
+                    cursor.execute("INSERT OR IGNORE INTO producto_catalog (producto) VALUES (?)", (producto_nuevo,))
+                    conn.commit()
+                except Exception as e:
+                    st.error(f"Error guardando en catálogo: {e}")
 
-    # Cargar y filtrar datos
+                cursor.execute("""
+                    SELECT COUNT(*) FROM rotacion_producto
+                    WHERE fecha = ? AND maquina = ? AND producto = ?
+                """, (str(fecha_sel), maquina_sel, producto_nuevo))
+                if cursor.fetchone()[0] > 0:
+                    st.warning("Ya existe un registro para ese producto en esta máquina y fecha. Si necesitas registrar otra venta, ajusta cantidades manualmente.")
+                else:
+                    cursor.execute("""
+                        INSERT INTO rotacion_producto (semana, fecha, maquina, producto, cantidad, precio_unitario, costo_compra, unidad_compra, unidades_por_paquete)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(semana_sel), str(fecha_sel), maquina_sel, producto_nuevo,
+                        int(cantidad_nueva), float(precio_unitario_preview), float(costo_compra), unidad_compra, int(unidades_por_paquete)
+                    ))
+                    conn.commit()
+                    try:
+                        sincronizar_egreso_en_ventas(maquina_sel, str(fecha_sel), float(costo_compra))
+                    except Exception:
+                        pass
+                    st.success("Producto registrado correctamente y egreso sincronizado (si aplica).")
+
+    # --- Editar registros por fila directamente en la tabla (sin selector global) ---
+    with st.expander("✏️ Editar registros (edita por fila)"):
+        df_todos = pd.read_sql_query(
+            "SELECT rowid, * FROM rotacion_producto WHERE semana = ? AND maquina = ? ORDER BY fecha, producto",
+            conn, params=(str(semana_sel), maquina_sel)
+        )
+
+        if df_todos.empty:
+            st.info("No hay productos registrados para esta máquina en esta semana.")
+        else:
+            # Mostrar tabla resumida
+            df_mostrar = df_todos[["rowid", "fecha", "producto", "cantidad", "costo_compra", "unidad_compra"]].copy()
+            df_mostrar.columns = ["rowid", "Fecha", "Producto", "Cantidad", "Costo compra", "Unidad"]
+            st.dataframe(df_mostrar.reset_index(drop=True), use_container_width=True)
+
+            st.markdown("**Acciones por fila**")
+            for _, fila in df_todos.iterrows():
+                rowid = int(fila["rowid"])
+                cols = st.columns([2, 3, 2, 2, 2, 1])
+                cols[0].write(fila["fecha"])
+                cols[1].write(fila["producto"])
+                cols[2].write(int(fila["cantidad"]))
+                cols[3].write(f"${float(fila['costo_compra'] or 0):,.0f}")
+                cols[4].write(fila["unidad_compra"])
+                if cols[5].button("Editar", key=f"editar_row_{rowid}"):
+                    # Abrir mini-formulario de edición exclusivo para esta fila
+                    with st.form(key=f"form_edit_{rowid}", clear_on_submit=False):
+                        st.markdown(f"### Editando registro: {fila['producto']} — {fila['fecha']}")
+                        cursor.execute("SELECT producto FROM producto_catalog ORDER BY producto COLLATE NOCASE")
+                        productos_guardados = [r[0] for r in cursor.fetchall()]
+                        producto_text = st.text_input("Producto", value=fila["producto"], key=f"prod_row_{rowid}")
+                        cantidad_val = st.number_input("Cantidad vendida", min_value=1, value=int(fila["cantidad"]), step=1, key=f"cant_row_{rowid}")
+                        costo_val = st.number_input("Costo total de compra", min_value=0.0, value=float(fila["costo_compra"] or 0.0), step=100.0, format="%.2f", key=f"cost_row_{rowid}")
+                        unidad_options = ["unidad", "docena", "paquete"]
+                        unidad_index = unidad_options.index(fila["unidad_compra"]) if fila["unidad_compra"] in unidad_options else 0
+                        unidad_val = st.selectbox("Unidad de compra", unidad_options, index=unidad_index, key=f"unidad_row_{rowid}")
+                        up_val = st.number_input("Unidades por paquete (si aplica)", min_value=1, value=int(fila.get("unidades_por_paquete") or 6), key=f"up_row_{rowid}") if unidad_val == "paquete" else 6
+
+                        submitted = st.form_submit_button("Guardar cambios", use_container_width=True, key=f"submit_row_{rowid}")
+                        if submitted:
+                            if not producto_text.strip():
+                                st.error("El nombre del producto no puede quedar vacío.")
+                            elif cantidad_val <= 0 or costo_val < 0:
+                                st.error("Cantidad debe ser >=1 y costo no negativo.")
+                            else:
+                                # Guardar nombre en catálogo si es nuevo
+                                try:
+                                    cursor.execute("INSERT OR IGNORE INTO producto_catalog (producto) VALUES (?)", (producto_text.strip(),))
+                                except:
+                                    pass
+                                # Actualizar registro
+                                precio_unit = calcular_precio_unitario(costo_val, unidad_val, up_val)
+                                cursor.execute("""
+                                    UPDATE rotacion_producto
+                                    SET producto = ?, cantidad = ?, costo_compra = ?, unidad_compra = ?, unidades_por_paquete = ?, precio_unitario = ?
+                                    WHERE rowid = ?
+                                """, (producto_text.strip(), int(cantidad_val), float(costo_val), unidad_val, int(up_val), float(precio_unit), rowid))
+                                conn.commit()
+
+                                # Ajuste de egreso según diferencia
+                                costo_ant = float(fila["costo_compra"] or 0.0)
+                                diferencia = float(costo_val) - costo_ant
+                                if diferencia != 0:
+                                    cursor.execute("SELECT egresos, egreso_auto FROM resumen_semanal WHERE maquina = ? AND fecha = ?", (fila["maquina"], fila["fecha"]))
+                                    res = cursor.fetchone()
+                                    if res:
+                                        egresos_act = float(res[0] or 0.0)
+                                        nuevo_egreso = max(0.0, egresos_act + diferencia)
+                                        egreso_auto_flag = res[1] if len(res) > 1 else 0
+                                        cursor.execute("UPDATE resumen_semanal SET egresos = ?, egreso_auto = ? WHERE maquina = ? AND fecha = ?", (nuevo_egreso, egreso_auto_flag, fila["maquina"], fila["fecha"]))
+                                        conn.commit()
+                                    else:
+                                        if diferencia > 0:
+                                            dia_semana = date.fromisoformat(fila["fecha"]).strftime("%A")
+                                            dia_map = {"Monday":"Lunes","Tuesday":"Martes","Wednesday":"Miércoles","Thursday":"Jueves","Friday":"Viernes","Saturday":"Sábado","Sunday":"Domingo"}
+                                            dia = dia_map.get(dia_semana, dia_semana)
+                                            semana_iso = date.fromisoformat(fila["fecha"]).isocalendar()[1]
+                                            semana_txt = f"Semana {semana_iso}"
+                                            cursor.execute("INSERT INTO resumen_semanal (semana, fecha, maquina, dia, ventas, egresos, egreso_auto) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                                           (semana_txt, fila["fecha"], fila["maquina"], dia, 0, diferencia, 1))
+                                            conn.commit()
+                                # Intentar log y re-sincronizar si corresponde
+                                try:
+                                    log_accion("UPDATE", fila["maquina"], fila["fecha"], producto_text.strip(), float(costo_val), f"Edición inline rowid={rowid}")
+                                except:
+                                    pass
+                                try:
+                                    if diferencia > 0:
+                                        sincronizar_egreso_en_ventas(fila["maquina"], fila["fecha"], diferencia)
+                                except:
+                                    pass
+
+                                st.success("Registro actualizado correctamente.")
+                                st.experimental_rerun()
+
+    # --- Cargar y mostrar datos de rotación para la máquina y semana ---
     df_rotacion = pd.read_sql_query(
         "SELECT * FROM rotacion_producto WHERE semana = ? AND maquina = ?",
         conn, params=(str(semana_sel), maquina_sel)
@@ -716,95 +913,64 @@ elif opcion == "Rotación":
                                        row["unidades_por_paquete"] if row["unidad_compra"] == "paquete" else 6),
             axis=1
         )
+        if "valor_unitario" not in df_rotacion.columns:
+            df_rotacion["valor_unitario"] = 0.0
         df_rotacion["margen_unitario"] = df_rotacion["valor_unitario"] - df_rotacion["precio_unitario"]
 
-        # 🔔 Alertas inteligentes
-        alertas = []
         margen_total = df_rotacion["valor_unitario"].sum() - df_rotacion["gasto_total"].sum()
         if margen_total < 0:
             st.error("⚠️ Margen negativo: estás gastando más de lo que vendes en esta máquina.")
-            alertas.append(["Margen negativo", "El gasto total supera el ingreso por ventas."])
 
-        # 📋 Resumen financiero
         st.subheader("📋 Resumen financiero semanal")
-        df_resumen_gasto = df_rotacion.groupby(["producto", "unidad_compra"]).agg({
-            "costo_compra": "sum"
-        }).reset_index()
+        df_resumen_gasto = df_rotacion.groupby(["producto", "unidad_compra"], as_index=False).agg({"costo_compra":"sum"})
         total_inversion_semana = df_resumen_gasto["costo_compra"].sum()
         st.success(f"🔔 Total invertido en compras esta semana: ${total_inversion_semana:,.0f}")
-        df_resumen_gasto["porcentaje_inversion"] = (
-            df_resumen_gasto["costo_compra"] / total_inversion_semana
-        ) * 100
+        df_resumen_gasto["porcentaje_inversion"] = (df_resumen_gasto["costo_compra"] / total_inversion_semana * 100) if total_inversion_semana > 0 else 0.0
         st.markdown("### 💸 Inversión por producto (según unidad de compra)")
         st.dataframe(df_resumen_gasto.sort_values("costo_compra", ascending=False), use_container_width=True)
 
-        # Resumen general para exportación
-        resumen_general = pd.DataFrame({
-            "Indicador": ["💰 Total vendido", "📦 Total gastado", "📈 Margen operativo"],
-            "Valor": [f"${df_rotacion['valor_unitario'].sum():,.0f}",
-                      f"${df_rotacion['gasto_total'].sum():,.0f}",
-                      f"${margen_total:,.0f}"]
-        })
-        # 📊 Resumen detallado por producto
-        st.subheader("📦 Productos más vendidos esta semana")
-        df_resumen = df_rotacion.groupby(["producto", "unidad_compra"]).agg({
+        # Gráfica de inversión total por producto
+        st.markdown("### 📈 Gráfica: Inversión total por producto (esta semana)")
+        try:
+            fig_inversion = px.bar(
+                df_resumen_gasto.sort_values("costo_compra", ascending=False),
+                x="producto",
+                y="costo_compra",
+                color="producto",
+                text="costo_compra",
+                labels={"costo_compra": "Inversión (COP)", "producto": "Producto"},
+                title="Inversión total por producto"
+            )
+            fig_inversion.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+            fig_inversion.update_layout(template="plotly_dark", showlegend=False, xaxis_title="", yaxis_title="Inversión")
+            st.plotly_chart(fig_inversion, use_container_width=True)
+        except Exception:
+            st.info("No se pudo generar la gráfica de inversión.")
+
+        # Tabla de productos más vendidos
+        st.subheader("🏆 Productos más vendidos esta semana")
+        df_productos_vendidos = df_rotacion.groupby(["producto", "unidad_compra"], as_index=False).agg({
             "cantidad": "sum",
-            "precio_unitario": "mean",
-            "gasto_total": "sum",
-            "valor_unitario": "sum"
-        }).reset_index()
-        df_resumen["margen_total"] = df_resumen["valor_unitario"] - df_resumen["gasto_total"]
+            "precio_unitario": "mean"
+        })
+        df_productos_vendidos["cantidad"] = df_productos_vendidos["cantidad"].astype(int)
+        df_productos_vendidos = df_productos_vendidos.sort_values("cantidad", ascending=False)
+        df_productos_vendidos = df_productos_vendidos[["producto", "unidad_compra", "cantidad", "precio_unitario"]]
+        st.dataframe(df_productos_vendidos.reset_index(drop=True), use_container_width=True)
 
-        st.dataframe(df_resumen.sort_values("cantidad", ascending=False), use_container_width=True)
-
-        # 🏆 Ranking de productos más vendidos
-        fig_cantidad = px.bar(
-            df_resumen.sort_values("cantidad", ascending=False),
-            x="producto", y="cantidad", color="unidad_compra",
-            title="Productos más vendidos por cantidad",
-            text="cantidad"
-        )
-        fig_cantidad.update_layout(template="plotly_dark")
-        st.plotly_chart(fig_cantidad, use_container_width=True)
-
-        # 💸 Ranking de inversión por producto (compra real)
-        fig_inversion_real = px.bar(
-            df_resumen_gasto.sort_values("costo_compra", ascending=False),
-            x="producto", y="costo_compra", color="unidad_compra",
-            title="Inversión total por producto (según unidad de compra)",
-            text="costo_compra",
-            labels={"costo_compra": "Costo total de compra", "producto": "Producto"}
-        )
-        fig_inversion_real.update_layout(template="plotly_dark")
-        st.plotly_chart(fig_inversion_real, use_container_width=True)
-
-        # 📈 Ranking de margen operativo (con color rojo si negativo)
-        df_resumen["color_margen"] = df_resumen["margen_total"].apply(
-            lambda x: "red" if x < 0 else "#00c853"
-        )
-        fig_margen = px.bar(
-            df_resumen.sort_values("margen_total", ascending=False),
-            x="producto", y="margen_total", color="color_margen",
-            title="Margen operativo semanal por producto",
-            text="margen_total",
-            color_discrete_map="identity"
-        )
-        fig_margen.update_layout(template="plotly_dark", showlegend=False)
-        st.plotly_chart(fig_margen, use_container_width=True)
-
-        # 📥 Exportar a Excel
+        # Exportar a Excel
         buf_rotacion = io.BytesIO()
         with pd.ExcelWriter(buf_rotacion, engine="openpyxl") as writer:
             df_rotacion.to_excel(writer, index=False, sheet_name=f"Rotación_{maquina_sel}")
-            resumen_general.to_excel(writer, index=False, sheet_name="Resumen_Financiero")
             df_resumen_gasto.to_excel(writer, index=False, sheet_name="Inversión_por_Producto")
-            df_resumen.to_excel(writer, index=False, sheet_name="Ranking_Productos")
+            df_productos_vendidos.to_excel(writer, index=False, sheet_name="Productos_Vendidos")
         st.download_button(
             "📥 Exportar rotación a Excel",
             data=buf_rotacion.getvalue(),
             file_name=f"rotacion_{maquina_sel}_semana_{semana_sel}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 #
 # Mantenimiento
 #
