@@ -643,7 +643,6 @@ if opcion == "Reabastecimiento":
     )
 #
 # Rotación
-#
 elif opcion == "Rotación":
     st.title("🔁 Rotación por Máquina")
 
