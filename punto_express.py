@@ -5,6 +5,19 @@ import sqlite3
 from datetime import date, timedelta
 import io
 import random
+import re    
+
+# import seguro de FPDF (debe ir una sola vez, al inicio del archivo)
+try:
+    from fpdf import FPDF
+    FPDF_AVAILABLE = True
+except Exception:
+    FPDF_AVAILABLE = False
+def limpiar_unicode(texto):
+    """Elimina caracteres no ASCII para evitar errores al generar PDF."""
+    return re.sub(r'[^\x00-\x7F]+', '', str(texto))
+
+
 
 # Festivos Colombia 2025
 festivos_2025 = {
@@ -204,165 +217,430 @@ st.markdown(
 #
 # Dashboard
 #
-from fpdf import FPDF
-import io
-from datetime import date
-import re
-import pandas as pd
-import plotly.express as px
+st.header("📊 Dashboard")
 
-def limpiar_unicode(texto):
-    return re.sub(r'[^\x00-\x7F]+', '', texto)
+# Leer datos crudos
+df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY fecha DESC", conn)
 
-if opcion == "Dashboard":
-    st.header("📊 Dashboard")
-    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY fecha DESC", conn)
+if df.empty:
+    st.info("No hay datos registrados aún.")
+else:
+    # Normalizaciones y tipos
+    df["semana"] = df.get("semana", "").fillna("")
+    df["fecha"] = pd.to_datetime(df.get("fecha", None), errors="coerce")
+    df["ventas"] = pd.to_numeric(df.get("ventas", 0), errors="coerce").fillna(0.0).astype(float)
+    df["egresos"] = pd.to_numeric(df.get("egresos", 0), errors="coerce").fillna(0.0).astype(float)
 
-    if not df.empty:
-        df["semana_num"] = df["semana"].str.extract(r'(\d+)').astype(int)
-        semana_actual = df["semana_num"].max()
-        semana_anterior = semana_actual - 1
+    # Extraer semana/año desde etiqueta "Semana N-AAAA" o "Semana N"
+    m = df["semana"].str.extract(r"Semana\s*(\d{1,2})(?:-(\d{4}))?")
+    df["semana_tag_num"] = pd.to_numeric(m[0], errors="coerce")
+    df["semana_tag_year"] = pd.to_numeric(m[1], errors="coerce")
 
-        df_sem = df[df["semana_num"] == semana_actual].copy()
+    # Semana/año desde fecha (compatibilidad con distintas versiones de pandas)
+    sem_info = df["fecha"].dt.isocalendar()
+    if hasattr(sem_info, "columns") and {"week", "year"}.issubset(sem_info.columns):
+        df["semana_date_num"] = sem_info["week"].astype("Int64")
+        df["semana_date_year"] = sem_info["year"].astype("Int64")
+    else:
+        df["semana_date_num"] = df["fecha"].dt.week.astype("Int64")
+        df["semana_date_year"] = df["fecha"].dt.year.astype("Int64")
+
+    # Preferir etiqueta si existe, sino usar fecha
+    df["semana_num"] = df["semana_tag_num"].fillna(df["semana_date_num"]).astype(int)
+    df["semana_year"] = df["semana_tag_year"].fillna(df["semana_date_year"]).astype(int)
+
+    # Determinar la semana más reciente por (año, semana)
+    df_valid = df.dropna(subset=["semana_num", "semana_year"])
+    if df_valid.empty:
+        st.info("No hay semanas reconocibles en los registros.")
+        st.stop()
+
+    max_pair = df_valid[["semana_year", "semana_num"]].drop_duplicates().sort_values(["semana_year", "semana_num"]).iloc[-1]
+    semana_actual = int(max_pair["semana_num"])
+    año_actual = int(max_pair["semana_year"])
+    semana_text = f"Semana {semana_actual}-{año_actual}"
+    semana_text_simple = f"Semana {semana_actual}"
+
+    # -------------------------------------------------------
+    # Totales autoritativos (usar lo que guardó Control Ventas)
+    # -------------------------------------------------------
+    cursor = conn.cursor()
+    tot_ventas_db = tot_egresos_db = 0.0
+    note_fallback = False
+
+    def leer_totales_por_etiqueta(etiqueta):
+        try:
+            cursor.execute(
+                "SELECT COALESCE(SUM(CAST(ventas AS REAL)),0), COALESCE(SUM(CAST(egresos AS REAL)),0) FROM resumen_semanal WHERE semana = ?",
+                (etiqueta,)
+            )
+            r = cursor.fetchone()
+            if r:
+                return float(r[0] or 0.0), float(r[1] or 0.0)
+        except Exception:
+            pass
+        return 0.0, 0.0
+
+    # 1) intentar etiqueta con año
+    tot_ventas_db, tot_egresos_db = leer_totales_por_etiqueta(semana_text)
+
+    # 2) fallback etiqueta simple
+    if tot_ventas_db == 0 and tot_egresos_db == 0:
+        tot_ventas_db, tot_egresos_db = leer_totales_por_etiqueta(semana_text_simple)
+
+    # 3) fallback por rango de fecha (lunes a sábado)
+    if tot_ventas_db == 0 and tot_egresos_db == 0:
+        try:
+            lunes = date.fromisocalendar(int(año_actual), int(semana_actual), 1)
+            fecha_ini = str(lunes)
+            fecha_fin = str(lunes + timedelta(days=5))
+            cursor.execute(
+                "SELECT COALESCE(SUM(CAST(ventas AS REAL)),0), COALESCE(SUM(CAST(egresos AS REAL)),0) FROM resumen_semanal WHERE fecha BETWEEN ? AND ?",
+                (fecha_ini, fecha_fin)
+            )
+            r = cursor.fetchone()
+            if r:
+                tot_ventas_db, tot_egresos_db = float(r[0] or 0.0), float(r[1] or 0.0)
+                note_fallback = True
+        except Exception:
+            tot_ventas_db, tot_egresos_db = 0.0, 0.0
+
+    ventas_actual = float(tot_ventas_db)
+    egresos_actual = float(tot_egresos_db)
+    margen_actual = ventas_actual - egresos_actual
+
+    # -------------------------------------------------------
+    # Construir df_sem desde la misma fuente autoritativa
+    # -------------------------------------------------------
+    try:
+        if not note_fallback:
+            df_sem = pd.read_sql_query(
+                "SELECT * FROM resumen_semanal WHERE semana = ? ORDER BY fecha, maquina",
+                conn, params=(semana_text,)
+            )
+            if df_sem.empty:
+                df_sem = pd.read_sql_query(
+                    "SELECT * FROM resumen_semanal WHERE semana = ? ORDER BY fecha, maquina",
+                    conn, params=(semana_text_simple,)
+                )
+        else:
+            df_sem = pd.read_sql_query(
+                "SELECT * FROM resumen_semanal WHERE fecha BETWEEN ? AND ? ORDER BY fecha, maquina",
+                conn, params=(fecha_ini, fecha_fin)
+            )
+    except Exception:
+        df_sem = pd.DataFrame(columns=["semana","fecha","maquina","dia","ventas","egresos"])
+
+    # Normalizar df_sem
+    if not df_sem.empty:
+        df_sem["fecha"] = pd.to_datetime(df_sem["fecha"], errors="coerce")
+        df_sem["ventas"] = pd.to_numeric(df_sem.get("ventas", 0), errors="coerce").fillna(0.0).astype(float)
+        df_sem["egresos"] = pd.to_numeric(df_sem.get("egresos", 0), errors="coerce").fillna(0.0).astype(float)
         df_sem["neto"] = df_sem["ventas"] - df_sem["egresos"]
-        profit = df_sem["neto"].sum()
-        fondo = round(profit * 0.05)
+    else:
+        df_sem = pd.DataFrame(columns=["semana","fecha","maquina","dia","ventas","egresos","neto"])
 
-        df_prev = df[df["semana_num"] == semana_anterior].copy()
-        ventas_actual = df_sem["ventas"].sum()
-        ventas_prev = df_prev["ventas"].sum()
-        variacion = round(((ventas_actual - ventas_prev) / ventas_prev) * 100, 2) if ventas_prev else 0
+    # -----------------------
+    # Métricas principales y adicionales
+    # -----------------------
+    # Promedio diario (Lun-Sáb)
+    try:
+        if not df_sem.empty:
+            dias_unicos = df_sem["fecha"].dt.date.nunique()
+            dias_unicos = dias_unicos if dias_unicos > 0 else 6
+            avg_daily = ventas_actual / dias_unicos
+        else:
+            avg_daily = ventas_actual / 6 if ventas_actual else 0.0
+    except Exception:
+        avg_daily = 0.0
 
-        st.metric("💰 Profit semanal", f"${profit}")
-        st.metric("🛟 Fondo emergencia (5%)", f"${fondo}")
-        st.metric("📈 Ventas vs semana anterior", f"${ventas_actual:,.0f}", f"{variacion:+.2f}%")
+    # Top máquina y su porcentaje de contribución
+    top_machine_pct = 0.0
+    top_machine = None
+    try:
+        if not df_sem.empty:
+            df_by_machine = df_sem.groupby("maquina", sort=False)["ventas"].sum().reset_index().sort_values("ventas", ascending=False)
+            if not df_by_machine.empty and ventas_actual > 0:
+                top_machine = df_by_machine.iloc[0]["maquina"]
+                top_machine_pct = float(df_by_machine.iloc[0]["ventas"]) / ventas_actual * 100
+    except Exception:
+        top_machine_pct = 0.0
+        top_machine = None
 
-        df_maq = df_sem.groupby("maquina")["ventas"].sum().reset_index()
-        fig = px.bar(df_maq, x="maquina", y="ventas", title=f"Máquinas más vendidas - Semana {semana_actual}", color="maquina")
+    # Mostrar métricas (origen: Control Ventas)
+    st.metric("💰 Ventas (semana - Control Ventas)", f"${ventas_actual:,.0f}")
+    st.metric("💸 Egresos (semana - Control Ventas)", f"${egresos_actual:,.0f}")
+    st.metric("📊 Margen (semana)", f"${margen_actual:,.0f}")
+
+    # métricas adicionales
+    st.metric("📅 Promedio diario (Lun-Sáb)", f"${avg_daily:,.0f}")
+    if top_machine:
+        st.metric("🏆 Top máquina (% ventas)", f"{top_machine}: {top_machine_pct:.1f}%")
+    else:
+        st.metric("🏆 Top máquina (% ventas)", "Sin datos")
+
+    if note_fallback:
+        st.warning("Se usó fallback por rango de fechas; verifica que Control Ventas guardó la etiqueta 'Semana N-AAAA'.")
+
+    # -----------------------
+    # Gráfica por máquina
+    # -----------------------
+    df_maq = df_sem.groupby("maquina", sort=False)["ventas"].sum().reset_index()
+    if not df_maq.empty:
+        fig = px.bar(df_maq, x="maquina", y="ventas", title=f"Máquinas más vendidas - Semana {semana_actual}-{año_actual}", color="maquina")
         st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No hay ventas por máquina para la semana seleccionada.")
 
-        df_comp = df[df["semana_num"].isin([semana_anterior, semana_actual])]
-        df_comp_sum = df_comp.groupby(["semana_num", "maquina"])["ventas"].sum().reset_index()
+    # -----------------------
+    # Comparativa 2 semanas
+    # -----------------------
+    semana_anterior = semana_actual - 1
+    año_anterior = año_actual
+    if semana_anterior < 1:
+        semana_anterior = 52
+        año_anterior = año_actual - 1
+
+    df_comp = df[df[["semana_num", "semana_year"]].apply(tuple, axis=1).isin([(semana_actual, año_actual), (semana_anterior, año_anterior)])]
+    if df_comp.empty:
+        try:
+            lunes = date.fromisocalendar(año_actual, semana_actual, 1)
+            fecha_ini = str(lunes)
+            fecha_fin = str(lunes + timedelta(days=5))
+            lunes_prev = date.fromisocalendar(año_anterior, semana_anterior, 1)
+            fecha_ini_prev = str(lunes_prev)
+            fecha_fin_prev = str(lunes_prev + timedelta(days=5))
+            df_comp = df[df["fecha"].astype(str).between(fecha_ini_prev, fecha_fin) & df["fecha"].notna()]
+        except Exception:
+            df_comp = pd.DataFrame(columns=df.columns)
+
+    if not df_comp.empty:
+        df_comp_sum = df_comp.groupby(["semana_num", "maquina"], sort=False)["ventas"].sum().reset_index()
         fig2 = px.bar(df_comp_sum, x="maquina", y="ventas", color="semana_num", barmode="group", title="📊 Comparativa por máquina (2 semanas)")
         st.plotly_chart(fig2, use_container_width=True)
 
-        lista_alertas = []
-        ventas_actual_por_maquina = df_sem.groupby("maquina")["ventas"].sum()
-        ventas_prev_por_maquina = df_prev.groupby("maquina")["ventas"].sum()
+    # -----------------------
+    # Alertas inteligentes
+    # -----------------------
+    lista_alertas = []
+    ventas_actual_por_maquina = df_sem.groupby("maquina")["ventas"].sum()
+    # Construir df_prev (priorizar etiqueta)
+    semana_text_prev = f"Semana {semana_anterior}-{año_anterior}"
+    semana_text_prev_simple = f"Semana {semana_anterior}"
 
-        for maquina in ventas_actual_por_maquina.index:
-            actual = ventas_actual_por_maquina[maquina]
-            anterior = ventas_prev_por_maquina.get(maquina, 0)
-            if anterior > 0:
-                cambio = ((actual - anterior) / anterior) * 100
-                if cambio <= -30:
-                    lista_alertas.append(f"🔴 {maquina} cayó {abs(round(cambio))}% respecto a la semana anterior.")
-                elif cambio >= 20:
-                    lista_alertas.append(f"🟢 {maquina} subió {round(cambio)}% respecto a la semana anterior.")
-            elif actual > 0:
-                lista_alertas.append(f"🟢 {maquina} tuvo ventas esta semana pero estaba en cero la anterior.")
+    cursor.execute("SELECT COALESCE(COUNT(*),0) FROM resumen_semanal WHERE semana = ?", (semana_text_prev,))
+    try:
+        count_prev_exact = int(cursor.fetchone()[0] or 0)
+    except Exception:
+        count_prev_exact = 0
+    if count_prev_exact == 0:
+        cursor.execute("SELECT COALESCE(COUNT(*),0) FROM resumen_semanal WHERE semana = ?", (semana_text_prev_simple,))
+        try:
+            count_prev_simple = int(cursor.fetchone()[0] or 0)
+        except Exception:
+            count_prev_simple = 0
+    else:
+        count_prev_simple = 0
 
-        if profit < 0:
-            lista_alertas.append("⚠️ Profit negativo esta semana. Revisa egresos y márgenes.")
-        if fondo < 50000:
-            lista_alertas.append(f"⚠️ Fondo de emergencia bajo: solo ${fondo:,.0f}")
+    if count_prev_exact > 0:
+        df_prev = pd.read_sql_query("SELECT * FROM resumen_semanal WHERE semana = ? ORDER BY fecha, maquina", conn, params=(semana_text_prev,))
+    elif count_prev_simple > 0:
+        df_prev = pd.read_sql_query("SELECT * FROM resumen_semanal WHERE semana = ? ORDER BY fecha, maquina", conn, params=(semana_text_prev_simple,))
+    else:
+        try:
+            lunes_prev = date.fromisocalendar(año_anterior, semana_anterior, 1)
+            fecha_ini_prev = str(lunes_prev)
+            fecha_fin_prev = str(lunes_prev + timedelta(days=5))
+            df_prev = pd.read_sql_query("SELECT * FROM resumen_semanal WHERE fecha BETWEEN ? AND ? ORDER BY fecha, maquina", conn, params=(fecha_ini_prev, fecha_fin_prev))
+        except Exception:
+            df_prev = pd.DataFrame(columns=df.columns)
 
-        if lista_alertas:
-            with st.expander("🚨 Alertas inteligentes"):
-                for alerta in lista_alertas:
-                    st.warning(alerta)
+    ventas_prev_por_maquina = df_prev.groupby("maquina")["ventas"].sum() if not df_prev.empty else pd.Series(dtype=float)
 
-        resumen = pd.DataFrame({
-            "Métrica": [
-                "Total Ventas", "Total Egresos", "Profit Neto",
-                "Fondo Emergencia (5%)", "Variación semanal"
-            ],
-            "Valor": [
-                f"${ventas_actual:,.0f}",
-                f"${df_sem['egresos'].sum():,.0f}",
-                f"${profit:,.0f}",
-                f"${fondo:,.0f}",
-                f"{variacion:+.2f}%"
-            ]
-        })
+    for maquina in ventas_actual_por_maquina.index:
+        actual = float(ventas_actual_por_maquina.get(maquina, 0.0))
+        anterior = float(ventas_prev_por_maquina.get(maquina, 0.0)) if not ventas_prev_por_maquina.empty else 0.0
+        if anterior > 0:
+            cambio = ((actual - anterior) / anterior) * 100
+            if cambio <= -30:
+                lista_alertas.append(f"🔴 {maquina} cayó {abs(round(cambio))}% respecto a la semana anterior.")
+            elif cambio >= 20:
+                lista_alertas.append(f"🟢 {maquina} subió {round(cambio)}% respecto a la semana anterior.")
+        elif actual > 0:
+            lista_alertas.append(f"🟢 {maquina} tuvo ventas esta semana pero estaba en cero la anterior.")
 
-        class PDF(FPDF):
-            def header(self):
-                self.set_font("Arial", "B", 16)
-                self.set_text_color(40, 40, 40)
-                self.cell(0, 10, "Puntoexpress - Resumen Ejecutivo", ln=True, align="C")
-                self.set_font("Arial", "", 12)
-                self.cell(0, 10, f"Semana {semana_actual}", ln=True, align="C")
-                self.ln(10)
+    if float(df_sem["neto"].sum()) < 0:
+        lista_alertas.append("⚠️ Profit negativo esta semana. Revisa egresos y márgenes.")
+    if round(max(0.0, float(df_sem["neto"].sum())) * 0.05) < 50000:
+        lista_alertas.append(f"⚠️ Fondo de emergencia bajo: solo ${round(max(0.0, float(df_sem['neto'].sum())) * 0.05):,.0f}")
 
-            def footer(self):
-                self.set_y(-15)
-                self.set_font("Arial", "I", 8)
-                self.set_text_color(100)
-                self.cell(0, 10, f"Generado el {date.today()}", align="C")
-
-        pdf = PDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=11)
-
-        for _, row in resumen.iterrows():
-            pdf.cell(60, 10, row["Métrica"], border=1)
-            pdf.cell(120, 10, str(row["Valor"]), border=1, ln=True)
-
-        if lista_alertas:
-            pdf.ln(10)
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 10, "Observaciones:", ln=True)
-            pdf.set_font("Arial", size=11)
+    if lista_alertas:
+        with st.expander("🚨 Alertas inteligentes"):
             for alerta in lista_alertas:
-                texto_limpio = limpiar_unicode(alerta)
-                pdf.multi_cell(0, 10, f"- {texto_limpio}")
+                try:
+                    texto_limpio = limpiar_unicode(alerta)
+                except Exception:
+                    texto_limpio = str(alerta)
+                st.warning(texto_limpio)
 
-        pdf_bytes = pdf.output(dest='S').encode('latin-1')
-        st.markdown("### 📄 Exportación PDF")
-        st.download_button(
-            label="📄 Exportar resumen en PDF",
-            data=pdf_bytes,
-            file_name=f"resumen_semana_{semana_actual}.pdf",
-            mime="application/pdf"
-        )
+    # -----------------------
+    # Resumen y exportación PDF (opcional)
+    # -----------------------
+    resumen = pd.DataFrame({
+        "Métrica": [
+            "Total Ventas", "Total Egresos", "Profit Neto",
+            "Fondo Emergencia (5%)", "Variación semanal"
+        ],
+        "Valor": [
+            f"${ventas_actual:,.0f}",
+            f"${df_sem['egresos'].sum():,.0f}",
+            f"${df_sem['neto'].sum():,.0f}",
+            f"${round(max(0.0, df_sem['neto'].sum()) * 0.05):,.0f}",
+            f"{(round(((ventas_actual - (ventas_prev if 'ventas_prev' in locals() else 0)) / (ventas_prev if 'ventas_prev' in locals() and ventas_prev else 1)) * 100, 2) if 'ventas_prev' in locals() and ventas_prev else 0):+.2f}%"
+        ]
+    })
 
-        # 📊 Panel de métricas semanales por mes
-        st.markdown("### 📊 Panel de métricas semanales por mes")
+    if 'FPDF_AVAILABLE' in globals() and FPDF_AVAILABLE:
+        try:
+            class PDF(FPDF):
+                def header(self):
+                    self.set_font("Arial", "B", 16)
+                    self.set_text_color(40, 40, 40)
+                    self.cell(0, 10, "Puntoexpress - Resumen Ejecutivo", ln=True, align="C")
+                    self.set_font("Arial", "", 12)
+                    self.cell(0, 10, f"Semana {semana_actual}-{año_actual}", ln=True, align="C")
+                    self.ln(10)
 
-        df_mensual = pd.read_sql_query("SELECT semana, fecha, ventas FROM resumen_semanal", conn)
-        df_mensual["fecha"] = pd.to_datetime(df_mensual["fecha"])
-        df_mensual["mes"] = df_mensual["fecha"].dt.strftime("%B")
-        df_mensual["semana_num"] = df_mensual["fecha"].dt.isocalendar().week
+                def footer(self):
+                    self.set_y(-15)
+                    self.set_font("Arial", "I", 8)
+                    self.set_text_color(100)
+                    self.cell(0, 10, f"Generado el {date.today()}", align="C")
 
-        df_semanal = df_mensual.groupby(["mes", "semana_num"])["ventas"].sum().reset_index()
-        df_semanal = df_semanal.sort_values(by="semana_num").reset_index(drop=True)
+            pdf = PDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=11)
 
-        df_semanal["variacion"] = df_semanal["ventas"].pct_change().fillna(0) * 100
+            for _, row in resumen.iterrows():
+                pdf.cell(60, 10, row["Métrica"], border=1)
+                pdf.cell(120, 10, str(row["Valor"]), border=1, ln=True)
+
+            if lista_alertas:
+                pdf.ln(10)
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(0, 10, "Observaciones:", ln=True)
+                pdf.set_font("Arial", size=11)
+                for alerta in lista_alertas:
+                    try:
+                        texto_limpio = limpiar_unicode(alerta)
+                    except Exception:
+                        texto_limpio = str(alerta)
+                    pdf.multi_cell(0, 10, f"- {texto_limpio}")
+
+            pdf_bytes = pdf.output(dest='S').encode('latin-1')
+            st.markdown("### 📄 Exportación PDF")
+            st.download_button(
+                label="📄 Exportar resumen en PDF",
+                data=pdf_bytes,
+                file_name=f"resumen_semana_{semana_actual}_{año_actual}.pdf",
+                mime="application/pdf"
+            )
+        except Exception as e:
+            st.info(f"No se pudo generar PDF: {e}")
+    else:
+        st.info("La librería FPDF no está disponible; instala 'fpdf' si quieres generar PDF desde el dashboard.")
+
+    # -----------------------
+    # Panel de métricas semanales por mes (forzar semana actual a usar ventas_actual)
+    # -----------------------
+    df_mensual = pd.read_sql_query("SELECT semana, fecha, COALESCE(ventas,0) AS ventas FROM resumen_semanal", conn)
+    df_mensual["fecha"] = pd.to_datetime(df_mensual["fecha"], errors="coerce")
+    df_mensual = df_mensual.dropna(subset=["fecha"]).copy()
+
+    if df_mensual.empty:
+        st.info("No hay datos históricos para mostrar métricas por mes.")
+    else:
+        # obtener semana y año ISO (compatible)
+        sem_info = df_mensual["fecha"].dt.isocalendar()
+        if hasattr(sem_info, "columns") and {"week", "year"}.issubset(sem_info.columns):
+            df_mensual["semana_num"] = sem_info["week"].astype(int)
+            df_mensual["semana_year"] = sem_info["year"].astype(int)
+        else:
+            df_mensual["semana_num"] = df_mensual["fecha"].dt.week.astype(int)
+            df_mensual["semana_year"] = df_mensual["fecha"].dt.year.astype(int)
+
+        # calcular el lunes de la semana y asignar mes por ese lunes
+        df_mensual["lunes_week"] = df_mensual["fecha"].apply(lambda d: (d - pd.Timedelta(days=d.weekday())).date())
+        df_mensual["mes_asignado"] = df_mensual["lunes_week"].apply(lambda d: pd.to_datetime(d).strftime("%B %Y"))
+
+        # etiqueta de semana unívoca
+        df_mensual["sem_label"] = df_mensual.apply(lambda r: f"{int(r['semana_num'])}-{int(r['semana_year'])}", axis=1)
+
+        # agrupar ventas por mes_asignado y sem_label
+        df_semanal = df_mensual.groupby(["mes_asignado", "sem_label"], sort=False)["ventas"].sum().reset_index()
+
+        # extraer componentes para ordenar
+        df_semanal[["sem_num_only", "sem_year_only"]] = df_semanal["sem_label"].str.split("-", expand=True).astype(int)
+        df_semanal = df_semanal.sort_values(by=["mes_asignado", "sem_year_only", "sem_num_only"]).reset_index(drop=True)
+
+        # Si falta la semana actual en df_semanal, insertarla con ventas_actual
+        current_label = f"{int(semana_actual)}-{int(año_actual)}"
+        if current_label not in df_semanal["sem_label"].values:
+            # intentar determinar mes_asignado para el lunes de la semana actual
+            try:
+                monday_current = date.fromisocalendar(int(año_actual), int(semana_actual), 1)
+                mes_asignado_current = pd.to_datetime(monday_current).strftime("%B %Y")
+            except Exception:
+                mes_asignado_current = df_semanal["mes_asignado"].iloc[0] if not df_semanal.empty else pd.to_datetime(date.today()).strftime("%B %Y")
+            # insertar fila
+            df_semanal = pd.concat([
+                df_semanal,
+                pd.DataFrame([{
+                    "mes_asignado": mes_asignado_current,
+                    "sem_label": current_label,
+                    "ventas": float(ventas_actual),
+                    "sem_num_only": int(semana_actual),
+                    "sem_year_only": int(año_actual)
+                }])
+            ], ignore_index=True)
+
+        # Reemplazar si existe para forzar el valor autoritativo
+        df_semanal.loc[df_semanal["sem_label"] == current_label, "ventas"] = float(ventas_actual)
+
+        # recalcular variaciones y color después del ajuste
+        df_semanal["variacion"] = df_semanal.groupby("mes_asignado")["ventas"].pct_change().fillna(0) * 100
         df_semanal["color"] = df_semanal["variacion"].apply(lambda x: "🟢" if x > 0 else ("🔴" if x < 0 else "⚪"))
 
-        for mes in df_semanal["mes"].unique():
+        # mostrar panel (paginado si hay muchas semanas)
+        st.markdown("### 📊 Panel de métricas semanales por mes")
+        MAX_COLS = 6
+        for mes in df_semanal["mes_asignado"].unique():
             st.markdown(f"#### 📅 {mes}")
-            semanas_mes = df_semanal[df_semanal["mes"] == mes]
-            cols = st.columns(len(semanas_mes))
-            for i, row in semanas_mes.iterrows():
-                with cols[i % len(cols)]:
-                    st.metric(
-                        label=f"Semana {int(row['semana_num'])}",
-                        value=f"${row['ventas']:,.0f}",
-                        delta=f"{row['color']} {row['variacion']:+.1f}%",
-                        delta_color="normal"
-                    )
+            semanas_mes = df_semanal[df_semanal["mes_asignado"] == mes].reset_index(drop=True)
+            if semanas_mes.empty:
+                st.info("No hay datos para este mes.")
+                continue
 
-    else:
-        st.info("No hay datos registrados aún.")
-
+            n = len(semanas_mes)
+            for start in range(0, n, MAX_COLS):
+                chunk = semanas_mes.iloc[start:start + MAX_COLS].reset_index(drop=True)
+                cols = st.columns(len(chunk))
+                for i, row in chunk.iterrows():
+                    sem_display = row["sem_label"].replace("-", " / ")
+                    label = f"Semana {sem_display}"
+                    if row["sem_label"] == current_label:
+                        label += " (actual)"
+                    with cols[i]:
+                        st.metric(
+                            label=label,
+                            value=f"${row['ventas']:,.0f}",
+                            delta=f"{row['color']} {row['variacion']:+.1f}%",
+                            delta_color="normal"
+                        )
 #
 # Control Ventas
 # 
-from datetime import date, timedelta
-import io
-
+    from datetime import date, timedelta
 if opcion == "Control Ventas":
     st.title("📆 Informe Semanal Editable")
 
@@ -370,130 +648,203 @@ if opcion == "Control Ventas":
     semana_actual = date.today().isocalendar()[1]
     año_actual = date.today().year
 
-    # Selección de semana
+    # Selección de semana y año (keys únicas para evitar conflicto entre dispositivos/vistas)
     col1, col2 = st.columns(2)
     with col1:
-        semana_num = st.number_input("Número de semana", 1, 52, semana_actual)
+        semana_num = st.number_input(
+            "Número de semana", min_value=1, max_value=53,
+            value=semana_actual, key=f"cv_semana_{semana_actual}_{año_actual}"
+        )
     with col2:
-        año = st.number_input("Año", 2020, 2030, año_actual)
+        año = st.number_input(
+            "Año", min_value=2020, max_value=2035,
+            value=año_actual, key=f"cv_año_{semana_actual}_{año_actual}"
+        )
 
-    lunes = date.fromisocalendar(año, semana_num, 1)
+    # Validar y calcular rango de fechas (lunes a sábado)
+    try:
+        lunes = date.fromisocalendar(int(año), int(semana_num), 1)
+    except Exception:
+        st.error("Semana o año inválidos. Ajusta los valores.")
+        st.stop()
+
     fechas = [lunes + timedelta(days=i) for i in range(6)]  # lunes a sábado
     dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
     st.subheader(f"📅 Semana {semana_num}: {fechas[0]} a {fechas[-1]}")
 
-    # Crear tabla si no existe
+    # Etiqueta única de semana que incluye año para evitar colisiones
+    semana_text = f"Semana {int(semana_num)}-{int(año)}"
+
+    # Asegurar existencia de tabla con tipos numéricos apropiados
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS resumen_semanal (
             semana TEXT,
             fecha TEXT,
             maquina TEXT,
             dia TEXT,
-            ventas INTEGER,
-            egresos INTEGER
+            ventas REAL,
+            egresos REAL,
+            egreso_auto INTEGER DEFAULT 0
         )
     """)
     conn.commit()
 
-    # Cargar datos existentes
+    # Cargar datos existentes para el rango: preferimos registros con la etiqueta semana_text,
+    # además incluimos aquellas filas sin etiqueta pero dentro del rango (compatibilidad con datos antiguos)
     df_exist = pd.read_sql_query(
-        "SELECT * FROM resumen_semanal WHERE fecha BETWEEN ? AND ? ORDER BY maquina, fecha",
-        conn, params=(str(fechas[0]), str(fechas[-1]))
+        "SELECT semana, fecha, maquina, dia, COALESCE(ventas,0) AS ventas, COALESCE(egresos,0) AS egresos "
+        "FROM resumen_semanal WHERE semana = ? OR fecha BETWEEN ? AND ? ORDER BY maquina, fecha",
+        conn, params=(semana_text, str(fechas[0]), str(fechas[-1]))
     )
 
+    # Lista de máquinas (mantener consistente en toda la app)
     maquinas = [
         "Motomall", "Unidad", "Norte", "Buses",
         "Paquetex", "Dekohouse", "Caldas", "Maquina 8"
     ]
-    registros = []
 
+    st.markdown("#### Ingresa ventas y egresos por día y máquina")
+
+    # Mostrar inputs por máquina y día, usar keys únicas basadas en máquina/fecha/semana/año
     for maquina in maquinas:
         st.markdown(f"### {maquina}")
         cols = st.columns(6)
         for i, fecha in enumerate(fechas):
             dia = dias_semana[i]
             fecha_str = str(fecha)
-            fila = df_exist[
-                (df_exist["maquina"] == maquina) &
-                (df_exist["fecha"] == fecha_str)
-            ]
-            venta_val = int(fila["ventas"].values[0]) if not fila.empty else 0
-            egreso_val = int(fila["egresos"].values[0]) if not fila.empty else 0
+            # Recuperar valores existentes en df_exist (si hay múltiples, preferir fila con semana_text)
+            filas_m = df_exist[(df_exist["maquina"] == maquina) & (df_exist["fecha"] == fecha_str)]
+            if not filas_m.empty:
+                fila_preferida = filas_m[filas_m["semana"] == semana_text]
+                if fila_preferida.empty:
+                    fila_preferida = filas_m.iloc[[0]]
+                else:
+                    fila_preferida = fila_preferida.iloc[[0]]
+                venta_val = float(fila_preferida["ventas"].values[0])
+                egreso_val = float(fila_preferida["egresos"].values[0])
+            else:
+                venta_val = 0.0
+                egreso_val = 0.0
+
+            # Keys únicas por input (incluyen semana y año)
+            key_v = f"cv_{maquina}_{fecha_str}_v_sem{semana_num}_y{año}"
+            key_e = f"cv_{maquina}_{fecha_str}_e_sem{semana_num}_y{año}"
+
             with cols[i]:
                 venta = st.number_input(
-                    f"{dia} Ventas", value=venta_val,
-                    key=f"{maquina}_{dia}_v"
+                    f"{dia} Ventas", min_value=0.0, value=venta_val,
+                    step=100.0, format="%.2f", key=key_v
                 )
                 egreso = st.number_input(
-                    f"{dia} Egresos", value=egreso_val,
-                    key=f"{maquina}_{dia}_e"
+                    f"{dia} Egresos", min_value=0.0, value=egreso_val,
+                    step=50.0, format="%.2f", key=key_e
                 )
-            registros.append((
-                f"Semana {semana_num}", fecha_str, maquina,
-                dia, venta, egreso
-            ))
 
-    # Guardar datos
-    if st.button("💾 Guardar semana"):
-        cursor.execute(
-            "DELETE FROM resumen_semanal WHERE fecha BETWEEN ? AND ?",
-            (str(fechas[0]), str(fechas[-1]))
-        )
-        conn.commit()
-        cursor.executemany(
-            "INSERT INTO resumen_semanal (semana, fecha, maquina, dia, ventas, egresos) VALUES (?, ?, ?, ?, ?, ?)",
-            registros
-        )
-        conn.commit()
-        st.success("✅ Semana actualizada")
+    # Botón para guardar: leer desde session_state para garantizar consistencia entre dispositivos
+    if st.button("💾 Guardar semana", key=f"guardar_semana_cv_{semana_num}_{año}"):
+        registros_a_insertar = []
+        for maquina in maquinas:
+            for i, fecha in enumerate(fechas):
+                dia = dias_semana[i]
+                fecha_str = str(fecha)
+                key_v = f"cv_{maquina}_{fecha_str}_v_sem{semana_num}_y{año}"
+                key_e = f"cv_{maquina}_{fecha_str}_e_sem{semana_num}_y{año}"
 
-    # Mostrar totales y gráficos
+                # Obtener valores desde session_state con fallback
+                venta_val = float(st.session_state.get(key_v, 0.0))
+                egreso_val = float(st.session_state.get(key_e, 0.0))
+
+                registros_a_insertar.append((
+                    semana_text, fecha_str, maquina, dia, venta_val, egreso_val
+                ))
+
+        # Operación atómica: borrar por etiqueta de semana y limpiar filas antiguas sin etiqueta dentro del rango
+        try:
+            # Borrar registros con la etiqueta exacta (seguro)
+            cursor.execute("DELETE FROM resumen_semanal WHERE semana = ?", (semana_text,))
+            # Borrar registros sin etiqueta (NULL o '') dentro el rango para evitar colisiones previas
+            cursor.execute("DELETE FROM resumen_semanal WHERE (semana IS NULL OR semana = '') AND fecha BETWEEN ? AND ?", (str(fechas[0]), str(fechas[-1])))
+            if registros_a_insertar:
+                cursor.executemany(
+                    "INSERT INTO resumen_semanal (semana, fecha, maquina, dia, ventas, egresos, egreso_auto) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [(r[0], r[1], r[2], r[3], r[4], r[5], 1) for r in registros_a_insertar]
+                )
+            conn.commit()
+            st.success("✅ Semana actualizada correctamente.")
+        except Exception as e:
+            conn.rollback()
+            st.error(f"Error guardando la semana: {e}")
+
+    # --- Mostrar totales y gráficos (usar solamente registros con la etiqueta exacta de semana) ---
     df_actualizada = pd.read_sql_query(
-        "SELECT * FROM resumen_semanal WHERE fecha BETWEEN ? AND ?",
-        conn, params=(str(fechas[0]), str(fechas[-1]))
+        "SELECT semana, fecha, maquina, dia, COALESCE(ventas,0) AS ventas, COALESCE(egresos,0) AS egresos FROM resumen_semanal WHERE semana = ? ORDER BY maquina, fecha",
+        conn, params=(semana_text,)
     )
 
-    if not df_actualizada.empty:
+    if df_actualizada.empty:
+        st.info("No se encontraron registros guardados con la etiqueta de semana. Asegúrate de haber guardado la semana (botón Guardar semana).")
+    else:
+        # asegurar tipos numéricos y rellenar NA
+        df_actualizada["ventas"] = pd.to_numeric(df_actualizada["ventas"], errors="coerce").fillna(0.0).astype(float)
+        df_actualizada["egresos"] = pd.to_numeric(df_actualizada["egresos"], errors="coerce").fillna(0.0).astype(float)
+
+        # Totales por SQL (robusto frente a duplicados)
+        cursor.execute("SELECT COALESCE(SUM(CAST(ventas AS REAL)),0), COALESCE(SUM(CAST(egresos AS REAL)),0) FROM resumen_semanal WHERE semana = ?", (semana_text,))
+        tot_ventas_sql, tot_egresos_sql = cursor.fetchone() or (0.0, 0.0)
+        tv = float(tot_ventas_sql)
+        te = float(tot_egresos_sql)
+
+        # neto y resto de métricas desde el dataframe confiable
         df_actualizada["neto"] = df_actualizada["ventas"] - df_actualizada["egresos"]
-        tv = df_actualizada["ventas"].sum()
-        te = df_actualizada["egresos"].sum()
-        tn = df_actualizada["neto"].sum()
-        dv = df_actualizada[df_actualizada["ventas"] > 0]["fecha"].nunique()
-        pdia = round(tv / dv, 2) if dv else 0
-        ft = round(tn * 0.05)
+        tn = float(df_actualizada["neto"].sum())
 
-        st.markdown("### 📊 Totales Semanales")
+        # días con ventas > 0 para promedio diario
+        ventas_por_dia = df_actualizada.groupby("fecha", sort=False)["ventas"].sum()
+        dv = int((ventas_por_dia > 0).sum())
+        pdia = round(tv / dv, 2) if dv else 0.0
+
+        ft = round(max(0.0, tn) * 0.05)
+
+        st.markdown("### 📊 Totales Semanales (calculado desde registros con etiqueta exacta)")
         c1, c2, c3 = st.columns(3)
-        c1.metric("🔢 Ventas", f"${tv}")
-        c2.metric("📉 Egresos", f"${te}")
-        c3.metric("💰 Profit", f"${tn}")
+        c1.metric("🔢 Ventas", f"${tv:,.0f}")
+        c2.metric("📉 Egresos", f"${te:,.0f}")
+        c3.metric("💰 Profit", f"${tn:,.0f}")
         c4, c5 = st.columns(2)
-        c4.metric("📈 Promedio diario", f"${pdia}")
-        c5.metric("🛟 Fondo 5%", f"${ft}")
+        c4.metric("📈 Promedio diario (días con ventas)", f"${pdia:,.2f}")
+        c5.metric("🛟 Fondo 5%", f"${ft:,.0f}")
 
-        # 🟠 Alerta corregida: días sin ventas reales
-        ventas_por_dia = df_actualizada.groupby("fecha")["ventas"].sum()
-        dias_sin_ventas = (ventas_por_dia == 0).sum()
+        # Alerta: días sin ventas reales
+        dias_sin_ventas = int((ventas_por_dia == 0).sum())
         if dias_sin_ventas > 0:
-            st.warning(f"🟠 Alerta: hay {dias_sin_ventas} días sin ventas esta semana.")
+            st.warning(f"🟠 Alerta: hay {dias_sin_ventas} día(s) sin ventas esta semana.")
 
-        # 🟢 Nota si todas las máquinas registraron ventas
-        maquinas_con_ventas = df_actualizada[df_actualizada["ventas"] > 0]["maquina"].unique()
-        if set(maquinas_con_ventas) == set(maquinas):
+        # Nota si todas las máquinas registraron ventas
+        maquinas_con_ventas = sorted(df_actualizada[df_actualizada["ventas"] > 0]["maquina"].unique().tolist())
+        maquinas_ref = maquinas  # lista definida arriba
+        if set(maquinas_con_ventas) == set(maquinas_ref) and len(maquinas_ref) > 0:
             st.success("🟢 Todas las máquinas registraron ventas esta semana. ¡Buen desempeño!")
 
-        # Gráficos
-        df_d = df_actualizada.groupby("dia")["ventas"].sum().reset_index()
-        fig1 = px.bar(df_d, x="dia", y="ventas", title="📅 Días con más ventas", color="dia")
+        # Gráficos: días y máquinas (mantener orden de dias_semana)
+        order_dias = dias_semana
+        df_d = df_actualizada.groupby("dia", sort=False)["ventas"].sum().reindex(order_dias).fillna(0).reset_index()
+        fig1 = px.bar(df_d, x="dia", y="ventas", title="📅 Días con más ventas", color="dia", labels={"ventas": "Ventas", "dia": "Día"})
+        fig1.update_layout(showlegend=False)
         st.plotly_chart(fig1, use_container_width=True)
 
-        df_m = df_actualizada.groupby("maquina")["ventas"].sum().reset_index()
-        fig2 = px.bar(df_m, x="maquina", y="ventas", title="🏭 Ventas por máquina", color="maquina")
+        df_m = df_actualizada.groupby("maquina")["ventas"].sum().reset_index().sort_values("ventas", ascending=False)
+        fig2 = px.bar(df_m, x="maquina", y="ventas", title="🏭 Ventas por máquina", color="maquina", labels={"ventas": "Ventas", "maquina": "Máquina"})
+        fig2.update_layout(xaxis_tickangle=-45, showlegend=False)
         st.plotly_chart(fig2, use_container_width=True)
 
-        # 🏆 Métricas destacadas
-        dia_top = df_actualizada.groupby("dia")["ventas"].sum().sort_values(ascending=False).index[0]
-        maquinas_top = df_actualizada.groupby("maquina")["ventas"].sum().sort_values(ascending=False).head(4)
+        # Métricas destacadas protegidas
+        if df_actualizada["ventas"].sum() > 0:
+            dia_top = df_actualizada.groupby("dia")["ventas"].sum().sort_values(ascending=False).index[0]
+            maquinas_top_list = df_actualizada.groupby("maquina")["ventas"].sum().sort_values(ascending=False).head(4).index.to_list()
+            maquinas_top_str = ", ".join(maquinas_top_list)
+        else:
+            dia_top = "N/A"
+            maquinas_top_str = "N/A"
 
         resumen = pd.DataFrame({
             "Métrica": [
@@ -503,16 +854,16 @@ if opcion == "Control Ventas":
             ],
             "Valor": [
                 f"${tv:,.0f}", f"${te:,.0f}", f"${tn:,.0f}",
-                f"${pdia:,.0f}", f"${ft:,.0f}",
+                f"${pdia:,.2f}", f"${ft:,.0f}",
                 dia_top,
-                ", ".join(maquinas_top.index)
+                maquinas_top_str
             ]
         })
 
         st.markdown("### 📋 Resumen Ejecutivo")
         st.dataframe(resumen, use_container_width=True)
 
-        # 📥 Exportar datos completos
+        # 📥 Exportar datos completos (ventas de la semana)
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
             df_actualizada.to_excel(writer, index=False, sheet_name=f"Semana_{semana_num}")
@@ -523,7 +874,7 @@ if opcion == "Control Ventas":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-                # 📥 Exportar resumen ejecutivo
+        # 📥 Exportar resumen ejecutivo
         buf_resumen = io.BytesIO()
         with pd.ExcelWriter(buf_resumen, engine="openpyxl") as writer:
             resumen.to_excel(writer, index=False, sheet_name="Resumen")
@@ -534,113 +885,202 @@ if opcion == "Control Ventas":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # 📊 Resumen mensual por semana
-    df_mensual = pd.read_sql_query("SELECT semana, fecha, ventas FROM resumen_semanal", conn)
-    df_mensual["fecha"] = pd.to_datetime(df_mensual["fecha"])
-    df_mensual["mes"] = df_mensual["fecha"].dt.strftime("%B")
-    df_mensual["semana_num"] = df_mensual["fecha"].dt.isocalendar().week
+    # --- Resumen mensual por semana (sujeto a existencia de datos) ---
+    df_mensual = pd.read_sql_query("SELECT semana, fecha, COALESCE(ventas,0) AS ventas FROM resumen_semanal", conn)
+    if not df_mensual.empty:
+        df_mensual["fecha"] = pd.to_datetime(df_mensual["fecha"])
+        df_mensual["mes"] = df_mensual["fecha"].dt.strftime("%B")
+        df_mensual["semana_num"] = df_mensual["fecha"].dt.isocalendar().week
 
-    resumen_semanal = df_mensual.groupby(["mes", "semana_num"])["ventas"].sum().reset_index()
-    resumen_semanal = resumen_semanal.sort_values(by=["semana_num"])
+        resumen_semanal = df_mensual.groupby(["mes", "semana_num"])["ventas"].sum().reset_index()
+        resumen_semanal = resumen_semanal.sort_values(by=["mes", "semana_num"])
 
-    st.markdown("### 📅 Totales por semana agrupados por mes")
-    st.dataframe(resumen_semanal.rename(columns={
-        "mes": "Mes",
-        "semana_num": "Semana",
-        "ventas": "Total Ventas"
-    }), use_container_width=True)
+        st.markdown("### 📅 Totales por semana agrupados por mes")
+        st.dataframe(resumen_semanal.rename(columns={
+            "mes": "Mes",
+            "semana_num": "Semana",
+            "ventas": "Total Ventas"
+        }), use_container_width=True)
 
-    # ⚠️ Alerta por semanas con ventas bajas
-    semanas_bajas = resumen_semanal[resumen_semanal["ventas"] < 10000]
-    if not semanas_bajas.empty:
-        st.warning(f"⚠️ Atención: {len(semanas_bajas)} semana(s) con ventas menores a $10,000.")
+        # Alerta por semanas con ventas bajas
+        semanas_bajas = resumen_semanal[resumen_semanal["ventas"] < 10000]
+        if not semanas_bajas.empty:
+            st.warning(f"⚠️ Atención: {len(semanas_bajas)} semana(s) con ventas menores a $10,000.")
+    else:
+        st.info("No hay datos históricos para mostrar el resumen mensual.")
 
 
-# 🧭 Nueva sección: Reabastecimiento Inteligente
+    # 🧭 Nueva sección: Reabastecimiento Inteligente
 if opcion == "Reabastecimiento":
     st.title("🚚 Reabastecimiento Inteligente")
 
+    # Parámetros de entrada
     col1, col2 = st.columns(2)
     with col1:
-        semana_prog = st.number_input("Semana de programación", 2, 52, 39)
+        semana_prog = st.number_input("Semana de programación", min_value=1, max_value=53, value=date.today().isocalendar()[1], key="rb_sem_prog")
     with col2:
-        año_prog = st.number_input("Año de programación", 2020, 2030, 2025)
+        año_prog = st.number_input("Año de programación", min_value=2020, max_value=2100, value=date.today().year, key="rb_año_prog")
 
-    # Ventas de la semana anterior
+    # Helpers: festivos (asegúrate de definir o cargar festivos_2025 en tu entorno)
+    try:
+        festivos = festivos_2025  # variable que ya tenías en tu app
+    except Exception:
+        # Si no existe, prevenir que falle: lista vacía
+        festivos = []
+
+    # --- Ventas de la semana anterior (segura) ---
     sem_venta = semana_prog - 1
-    lunes_v = date.fromisocalendar(año_prog, sem_venta, 1)
+    if sem_venta < 1:
+        # manejar cambio de año simple: retroceder al año anterior última semana (simplificación)
+        sem_venta = 52
+        año_venta = año_prog - 1
+    else:
+        año_venta = año_prog
+
+    try:
+        lunes_v = date.fromisocalendar(int(año_venta), int(sem_venta), 1)
+    except Exception:
+        st.error("Semana/anio inválidos para la consulta de ventas anteriores.")
+        st.stop()
+
     fechas_v = [lunes_v + timedelta(days=i) for i in range(6)]
-    df_v = pd.read_sql_query(
-        "SELECT * FROM resumen_semanal WHERE fecha BETWEEN ? AND ?",
-        conn, params=(str(fechas_v[0]), str(fechas_v[-1]))
-    )
+    # Leer solo columnas necesarias y proteger la consulta
+    try:
+        df_v = pd.read_sql_query(
+            "SELECT semana, fecha, maquina, COALESCE(ventas,0) AS ventas FROM resumen_semanal WHERE fecha BETWEEN ? AND ?",
+            conn, params=(str(fechas_v[0]), str(fechas_v[-1]))
+        )
+    except Exception:
+        df_v = pd.DataFrame(columns=["semana", "fecha", "maquina", "ventas"])
 
-    df_rank = df_v.groupby("maquina")["ventas"].sum().reset_index().sort_values("ventas", ascending=False)
+    # Si no hay datos, evitar errores posteriores
+    if df_v.empty:
+        st.info("No se encontraron registros de ventas para la semana anterior; la programación será conservadora.")
+        # crear df_rank vacío con columna maquina para no romper el flujo
+        df_rank = pd.DataFrame(columns=["maquina", "ventas"])
+    else:
+        df_rank = df_v.groupby("maquina", sort=False)["ventas"].sum().reset_index().sort_values("ventas", ascending=False)
+
+    # Top4 robusto (si hay menos de 4 máquinas, tomar las disponibles)
     top4 = df_rank.head(4)["maquina"].tolist()
+    # si top4 vacío, usar lista de máquinas desde BD o una lista por defecto
+    if not top4:
+        try:
+            cursor.execute("SELECT nombre_maquina FROM maquina")
+            top4 = [r[0] for r in cursor.fetchall() if r[0]]
+        except Exception:
+            top4 = []
+    # Si aún vacío, usar un placeholder para evitar crash
+    if not top4:
+        st.warning("No hay máquinas disponibles para programar reabastecimiento.")
+        top4 = []
 
-    # Calendario de programación
-    lunes_p = date.fromisocalendar(año_prog, semana_prog, 1)
+    # --- Calendario de programación (semana objetivo) ---
+    try:
+        lunes_p = date.fromisocalendar(int(año_prog), int(semana_prog), 1)
+    except Exception:
+        st.error("Semana/anio inválidos para la programación.")
+        st.stop()
+
     sched_days = [lunes_p + timedelta(days=i) for i in range(6)]
-    dias_nombre = {0:"Lunes",1:"Martes",2:"Miércoles",3:"Jueves",4:"Viernes",5:"Sábado"}
+    dias_nombre = {0: "Lunes", 1: "Martes", 2: "Miércoles", 3: "Jueves", 4: "Viernes", 5: "Sábado"}
+
+    # mapping defensivo: si top4 tiene menos elementos, usar lo que exista
     mapping = {
-        "Lunes":   [top4[0], top4[1]],
-        "Martes":  [top4[0], top4[2]],
-        "Miércoles":[top4[0], top4[1]],
-        "Jueves":  [top4[0], top4[3]],
-        "Viernes": [top4[0], top4[1]],
-        "Sábado":  [top4[2]]
+        "Lunes":   top4[0:2] if len(top4) >= 2 else top4[:],
+        "Martes":  [top4[0]] + ([top4[2]] if len(top4) > 2 else []),
+        "Miércoles": top4[0:2] if len(top4) >= 2 else top4[:],
+        "Jueves":  [top4[0]] + ([top4[3]] if len(top4) > 3 else []),
+        "Viernes": top4[0:2] if len(top4) >= 2 else top4[:],
+        "Sábado":  [top4[2]] if len(top4) > 2 else (top4[:] if top4 else [])
     }
 
+    # construir schedule evitando claves duplicadas y asegurando listas
     schedule = {}
-    workdays = [d for d in sched_days if str(d) not in festivos_2025]
-    holidays = [d for d in sched_days if str(d) in festivos_2025]
+    workdays = [d for d in sched_days if str(d) not in [str(x) for x in festivos]]
+    holidays = [d for d in sched_days if str(d) in [str(x) for x in festivos]]
 
     for d in workdays:
-        name = dias_nombre[d.weekday()]
-        schedule[d] = mapping.get(name, [])
+        name = dias_nombre.get(d.weekday(), str(d.weekday()))
+        assigned = mapping.get(name, []).copy()
+        # garantizar elementos únicos
+        schedule[d] = list(dict.fromkeys(assigned))
 
+    # si hay feriados, trasladar programación al día anterior si existe en schedule
     for h in holidays:
         prev = h - timedelta(days=1)
         if prev in schedule:
-            schedule[prev] = top4.copy()
+            # reemplazar por top4 completo (si existe) o dejar como estaba
+            schedule[prev] = list(dict.fromkeys(top4 + schedule.get(prev, [])))
 
+    # Sábado: asignar espacio libre según opción de usuario
     sat = [d for d in workdays if d.weekday() == 5]
     sat_day = sat[0] if sat else None
-    counts = {m: sum(m in v for v in schedule.values()) for m in top4}
-    emergent = df_rank["maquina"].tolist()[4] if len(df_rank) > 4 else None
-    least = min(counts, key=counts.get)
+    # counts seguros (si top4 vacío, counts vacíos)
+    counts = {m: sum(m in v for v in schedule.values()) for m in top4} if top4 else {}
+    emergent = None
+    if not df_rank.empty and len(df_rank) > 4:
+        emergent = df_rank.iloc[4]["maquina"]
+    # elegir la menos abastecida de top4 si existen
+    least = None
+    if counts:
+        least = min(counts, key=counts.get)
 
     opcion_libre = st.radio(
         "¿Cómo asignar espacio libre del sábado?",
         ("Opción A: máquina menos abastecida", "Opción B: máquina emergente")
     )
-    flex = least if opcion_libre.startswith("Opción A") else emergent
+    # decidir flex de forma robusta
+    flex = None
+    if opcion_libre.startswith("Opción A") and least:
+        flex = least
+    elif opcion_libre.startswith("Opción B") and emergent:
+        flex = emergent
+    # si no hay flex disponible, no asignar
     if sat_day and flex:
-        schedule[sat_day].append(flex)
+        if flex not in schedule.get(sat_day, []):
+            schedule.setdefault(sat_day, []).append(flex)
 
+    # Mostrar ranking (protecciones)
     st.markdown("### 🏆 Ranking Semanal")
-    st.table(df_rank.head(8).reset_index(drop=True))
+    if df_rank.empty:
+        st.info("No hay datos de ventas para generar ranking.")
+    else:
+        st.table(df_rank.head(8).reset_index(drop=True))
 
+    # Construir DataFrame de calendario (ordenado)
     data = []
-    for d in sorted(schedule):
+    for d in sorted(schedule.keys()):
+        maquinas_str = ", ".join(schedule[d]) if schedule[d] else "(sin asignar)"
         data.append({
             "fecha": str(d),
-            "día": dias_nombre[d.weekday()],
-            "máquinas": ", ".join(schedule[d])
+            "día": dias_nombre.get(d.weekday(), ""),
+            "máquinas": maquinas_str
         })
-    sched_df = pd.DataFrame(data)
-    st.markdown("### 📅 Calendario de Reabastecimiento")
-    st.table(sched_df)
+    if data:
+        sched_df = pd.DataFrame(data)
+    else:
+        sched_df = pd.DataFrame(columns=["fecha", "día", "máquinas"])
 
-    buf2 = io.BytesIO()
-    with pd.ExcelWriter(buf2, engine="openpyxl") as writer:
-        sched_df.to_excel(writer, index=False, sheet_name=f"Reab_{semana_prog}")
-    st.download_button(
-        "📥 Exportar Reabastecimiento a Excel",
-        data=buf2.getvalue(),
-        file_name=f"reabastecimiento_semana_{semana_prog}_{año_prog}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.markdown("### 📅 Calendario de Reabastecimiento")
+    if sched_df.empty:
+        st.info("No hay programación generada para la semana seleccionada.")
+    else:
+        st.table(sched_df)
+
+    # Exportar Excel (seguro)
+    try:
+        buf2 = io.BytesIO()
+        with pd.ExcelWriter(buf2, engine="openpyxl") as writer:
+            sched_df.to_excel(writer, index=False, sheet_name=f"Reab_{semana_prog}")
+        st.download_button(
+            "📥 Exportar Reabastecimiento a Excel",
+            data=buf2.getvalue(),
+            file_name=f"reabastecimiento_semana_{semana_prog}_{año_prog}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        st.error(f"No se pudo generar el archivo de exportación: {e}")
 #
 # Rotación
 elif opcion == "Rotación":
