@@ -1,3 +1,5 @@
+import os
+import time
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -5,20 +7,74 @@ import sqlite3
 from datetime import date, timedelta
 import io
 import random
-import re    
+import re
 
-# import seguro de FPDF (debe ir una sola vez, al inicio del archivo)
+# Ruta absoluta y directorio para la base de datos
+DB_DIR = os.path.join(os.path.expanduser("~"), "vending_data")
+DB_FILENAME = "punto_express.db"
+DB_PATH = os.path.join(DB_DIR, DB_FILENAME)
+
+# Asegurar existencia y permisos del directorio
+if not os.path.isdir(DB_DIR):
+    os.makedirs(DB_DIR, exist_ok=True)
+    try:
+        os.chmod(DB_DIR, 0o775)
+    except Exception:
+        pass
+
+# Conexión SQLite robusta
+try:
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
+    cursor = conn.cursor()
+except sqlite3.OperationalError as e:
+    raise SystemExit(f"No se pudo abrir o crear la base de datos en '{DB_PATH}': {e}")
+
+# Función de ejecución con reintentos para evitar errors "database is locked"
+def execute_with_retry(sql, params=(), retries=6, base_delay=0.05):
+    for attempt in range(retries):
+        try:
+            with conn:
+                conn.execute(sql, params)
+            return
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < retries - 1:
+                time.sleep(base_delay * (2 ** attempt))
+                continue
+            raise
+
+# Helpers para navegación y limpieza de session_state
+def clear_section_state(prefix):
+    keys = [k for k in list(st.session_state.keys()) if k.startswith(prefix)]
+    for k in keys:
+        del st.session_state[k]
+
+def on_nav_change():
+    prev = st.session_state.get("_prev_section")
+    cur = st.session_state.get("_nav_select")
+    if prev and prev != cur:
+        clear_section_state(prev + "_")
+        st.session_state[f"{cur}_version"] = st.session_state.get(f"{cur}_version", 0)
+        st.experimental_rerun()
+
+# Navegación en sidebar
+secciones = ["Dashboard", "Rotación", "Otra"]
+st.sidebar.selectbox("Sección", secciones, key="_nav_select", on_change=on_nav_change)
+st.session_state["_prev_section"] = st.session_state.get("_nav_select")
+opcion = st.session_state.get("_nav_select")
+
+# import seguro de FPDF (opcional)
 try:
     from fpdf import FPDF
     FPDF_AVAILABLE = True
 except Exception:
     FPDF_AVAILABLE = False
+
 def limpiar_unicode(texto):
-    """Elimina caracteres no ASCII para evitar errores al generar PDF."""
     return re.sub(r'[^\x00-\x7F]+', '', str(texto))
-
-
-
+    
 # Festivos Colombia 2025
 festivos_2025 = {
     "2025-01-01", "2025-01-06", "2025-03-24", "2025-04-17", "2025-04-18",
@@ -217,70 +273,71 @@ st.markdown(
 #
 # Dashboard
 #
-st.header("📊 Dashboard")
+if opcion == "Dashboard":
+    st.header("📊 Dashboard")
 
-# Leer datos crudos
-df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY fecha DESC", conn)
+    # Leer datos crudos
+    df = pd.read_sql_query("SELECT * FROM resumen_semanal ORDER BY fecha DESC", conn)
 
-if df.empty:
-    st.info("No hay datos registrados aún.")
-else:
-    # Normalizaciones y tipos
-    df["semana"] = df.get("semana", "").fillna("")
-    df["fecha"] = pd.to_datetime(df.get("fecha", None), errors="coerce")
-    df["ventas"] = pd.to_numeric(df.get("ventas", 0), errors="coerce").fillna(0.0).astype(float)
-    df["egresos"] = pd.to_numeric(df.get("egresos", 0), errors="coerce").fillna(0.0).astype(float)
-
-    # Extraer semana/año desde etiqueta "Semana N-AAAA" o "Semana N"
-    m = df["semana"].str.extract(r"Semana\s*(\d{1,2})(?:-(\d{4}))?")
-    df["semana_tag_num"] = pd.to_numeric(m[0], errors="coerce")
-    df["semana_tag_year"] = pd.to_numeric(m[1], errors="coerce")
-
-    # Semana/año desde fecha (compatibilidad con distintas versiones de pandas)
-    sem_info = df["fecha"].dt.isocalendar()
-    if hasattr(sem_info, "columns") and {"week", "year"}.issubset(sem_info.columns):
-        df["semana_date_num"] = sem_info["week"].astype("Int64")
-        df["semana_date_year"] = sem_info["year"].astype("Int64")
-    else:
-        df["semana_date_num"] = df["fecha"].dt.week.astype("Int64")
-        df["semana_date_year"] = df["fecha"].dt.year.astype("Int64")
-
-    # Preferir etiqueta si existe, sino usar fecha
-    df["semana_num"] = df["semana_tag_num"].fillna(df["semana_date_num"]).astype(int)
-    df["semana_year"] = df["semana_tag_year"].fillna(df["semana_date_year"]).astype(int)
-
-    # Determinar la semana más reciente por (año, semana)
-    df_valid = df.dropna(subset=["semana_num", "semana_year"])
-    if df_valid.empty:
-        st.info("No hay semanas reconocibles en los registros.")
+    if df.empty:
+        st.info("No hay datos registrados aún.")
         st.stop()
+    else:
+        # Normalizaciones y tipos
+        df["semana"] = df.get("semana", "").fillna("")
+        df["fecha"] = pd.to_datetime(df.get("fecha", None), errors="coerce")
+        df["ventas"] = pd.to_numeric(df.get("ventas", 0), errors="coerce").fillna(0.0).astype(float)
+        df["egresos"] = pd.to_numeric(df.get("egresos", 0), errors="coerce").fillna(0.0).astype(float)
 
-    max_pair = df_valid[["semana_year", "semana_num"]].drop_duplicates().sort_values(["semana_year", "semana_num"]).iloc[-1]
-    semana_actual = int(max_pair["semana_num"])
-    año_actual = int(max_pair["semana_year"])
-    semana_text = f"Semana {semana_actual}-{año_actual}"
-    semana_text_simple = f"Semana {semana_actual}"
+        # Extraer semana/año desde etiqueta "Semana N-AAAA" o "Semana N"
+        m = df["semana"].str.extract(r"Semana\s*(\d{1,2})(?:-(\d{4}))?")
+        df["semana_tag_num"] = pd.to_numeric(m[0], errors="coerce")
+        df["semana_tag_year"] = pd.to_numeric(m[1], errors="coerce")
 
-    # -------------------------------------------------------
-    # Totales autoritativos (usar lo que guardó Control Ventas)
-    # -------------------------------------------------------
-    cursor = conn.cursor()
-    tot_ventas_db = tot_egresos_db = 0.0
-    note_fallback = False
+        # Semana/año desde fecha (compatibilidad con distintas versiones de pandas)
+        sem_info = df["fecha"].dt.isocalendar()
+        if hasattr(sem_info, "columns") and {"week", "year"}.issubset(sem_info.columns):
+            df["semana_date_num"] = sem_info["week"].astype("Int64")
+            df["semana_date_year"] = sem_info["year"].astype("Int64")
+        else:
+            df["semana_date_num"] = df["fecha"].dt.week.astype("Int64")
+            df["semana_date_year"] = df["fecha"].dt.year.astype("Int64")
 
-    def leer_totales_por_etiqueta(etiqueta):
-        try:
-            cursor.execute(
-                "SELECT COALESCE(SUM(CAST(ventas AS REAL)),0), COALESCE(SUM(CAST(egresos AS REAL)),0) FROM resumen_semanal WHERE semana = ?",
-                (etiqueta,)
-            )
-            r = cursor.fetchone()
-            if r:
-                return float(r[0] or 0.0), float(r[1] or 0.0)
-        except Exception:
-            pass
-        return 0.0, 0.0
+        # Preferir etiqueta si existe, sino usar fecha
+        df["semana_num"] = df["semana_tag_num"].fillna(df["semana_date_num"]).astype(int)
+        df["semana_year"] = df["semana_tag_year"].fillna(df["semana_date_year"]).astype(int)
 
+        # Determinar la semana más reciente por (año, semana)
+        df_valid = df.dropna(subset=["semana_num", "semana_year"])
+        if df_valid.empty:
+            st.info("No hay semanas reconocibles en los registros.")
+            st.stop()
+
+        max_pair = df_valid[["semana_year", "semana_num"]].drop_duplicates().sort_values(["semana_year", "semana_num"]).iloc[-1]
+        semana_actual = int(max_pair["semana_num"])
+        año_actual = int(max_pair["semana_year"])
+        semana_text = f"Semana {semana_actual}-{año_actual}"
+        semana_text_simple = f"Semana {semana_actual}"
+
+        # -------------------------------------------------------
+        # Totales autoritativos (usar lo que guardó Control Ventas)
+        # -------------------------------------------------------
+        cursor = conn.cursor()
+        tot_ventas_db = tot_egresos_db = 0.0
+        note_fallback = False
+
+        def leer_totales_por_etiqueta(etiqueta):
+            try:
+                cursor.execute(
+                    "SELECT COALESCE(SUM(CAST(ventas AS REAL)),0), COALESCE(SUM(CAST(egresos AS REAL)),0) FROM resumen_semanal WHERE semana = ?",
+                    (etiqueta,)
+                )
+                r = cursor.fetchone()
+                if r:
+                    return float(r[0] or 0.0), float(r[1] or 0.0)
+            except Exception:
+                pass
+            return 0.0, 0.0
     # 1) intentar etiqueta con año
     tot_ventas_db, tot_egresos_db = leer_totales_por_etiqueta(semana_text)
 
