@@ -1540,7 +1540,7 @@ elif opcion == "Rotación":
                         cursor.execute("DELETE FROM rotacion_producto WHERE rowid = ?", (rowid,))
                         conn.commit()
                         st.warning("Registro eliminado.")
-                        st.experimental_rerun()
+                        st.rerun()
 
     # --- Cargar y mostrar datos de rotación para la máquina y semana ---
     df_rotacion = pd.read_sql_query(
